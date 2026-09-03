@@ -346,3 +346,17 @@ Tujuan: hasil reverse bisa diringkas aman.
 - [x] Tidak push artifact private
 
 Alasan: AI perlu catatan kerja lintas sesi tanpa commit dump besar.
+
+## Phase 22 — Native Windows Memory Engine (v0.4.0)
+
+Tujuan: Dukungan penuh memory scanning, reading, writing, dan module mapping di Windows tanpa dependensi eksternal (scanmem/GDB).
+
+- [x] Native Toolhelp32 process snapshotting (`list_processes`, `process_info`, `is_pid_alive`)
+- [x] Native Toolhelp32 module snapshotting (`list_modules`, `read_modules`)
+- [x] Native VirtualQueryEx memory mapping (`process_read_maps`)
+- [x] Native ReadProcessMemory (`read_process_memory`, `memory_read_*`)
+- [x] Native WriteProcessMemory (`scanmem_write_selected`, guarded memory writes)
+- [x] Native multi-type scanner engine (`native_scan.rs`): Exact, Range, Unknown/Snapshot, Increased (+), Decreased (-), Changed, Unchanged
+- [x] Native persistent freeze loop (`FreezeLoop`)
+- [x] Standalone zero external crate dependencies via direct Win32 FFI (`kernel32.dll`)
+

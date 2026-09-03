@@ -5,13 +5,18 @@ description: AI-powered game memory scanner and reverse engineering toolkit via 
 
 # cheat-engine-mcp Skill
 
+## Supported Platforms
+- **Windows (Native)**: Full support for memory scanning (`scanmem_scan_*`), process search (`process_search`), memory reading (`memory_read_*`), memory writing (`scanmem_write_*`), and persistent freeze (`scanmem_freeze_value`) via Win32 API (`kernel32.dll`). No external tools like `scanmem` or GDB needed on Windows.
+- **Linux**: Full support for all tools including `scanmem` backend and dynamic GDB breakpoints/probes.
+- **IL2CPP & Cheat Tables**: Fully cross-platform on all systems.
+
 ## When to Use
 Automatically activate this skill when the user asks about:
-- Game hacking, memory scanning, value scanning
-- scanmem, cheat engine, process memory, game values
-- Reverse engineering, Unity, IL2CPP, dump.cs
-- GDB hooks, breakpoint probes, dynamic function hooking
-- Cheat tables, workspaces, game reports, RVA mapping
+- Game hacking, memory scanning, value scanning on Windows or Linux
+- Finding memory offsets, addresses, or values in games (e.g. Taskbar Heroes, Unity games)
+- Scanning HP, gold, score, godmode, freeze value
+- Unity IL2CPP analysis, dump.cs, RVA mapping
+- Process memory reading, editing, and cheat table management
 
 ## Safety Policy
 This tool is authorized for local/defensive/educational testing only. Always respect the safety limits:
@@ -22,14 +27,14 @@ This tool is authorized for local/defensive/educational testing only. Always res
 
 ## Common Workflows
 
-### 1. Memory Scanning Workflow
-1. Find PID using `process_search` with name query.
+### 1. Memory Scanning Workflow (Windows & Linux)
+1. Find PID using `process_search` with name query (e.g. `query: "taskbar"`).
 2. Initialize scan session with `session_create` (requires PID).
 3. Search for initial value using `scanmem_scan_exact` or `scanmem_scan_by_type`.
-4. Perform game actions, then filter using `scanmem_scan_decreased`, `scanmem_scan_increased`, or `scanmem_scan_unchanged`.
+4. Perform game actions (e.g. take damage, gain gold), then filter using `scanmem_scan_decreased`, `scanmem_scan_increased`, or `scanmem_scan_unchanged`.
 5. List remaining matches with `scanmem_list_matches`.
 6. Preview the write with `scanmem_preview_write`.
-7. Write the value with `scanmem_write_selected` specifying `confirm_write: true`.
+7. Write or freeze the value with `scanmem_write_selected` or `scanmem_freeze_value` specifying `confirm_write: true`.
 
 ### 2. Unity IL2CPP Reverse Engineering
 1. Check IL2CPP dump status with `il2cpp_artifacts_status`.
@@ -39,7 +44,7 @@ This tool is authorized for local/defensive/educational testing only. Always res
 5. Retrieve complete class details using `il2cpp_method_detail`.
 6. Find functions from assembly code using `il2cpp_find_by_rva`.
 
-### 3. GDB Function Hooking
+### 3. GDB Function Hooking (Linux Only)
 1. Identify target RVA and module base (e.g., `GameAssembly.dll`).
 2. Run `rva_disassemble_preview` to preview assembly instructions at RVA.
 3. Formulate GDB commands (e.g., `set $xmm0.v4_float[0] = 9999.0` to set return value).

@@ -1,29 +1,29 @@
 # 🎮 cheat-engine-mcp
 
-[![CI](https://github.com/gede-cahya/cheat-engine-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/gede-cahya/cheat-engine-mcp/actions/workflows/ci.yml)
-[![Release](https://github.com/gede-cahya/cheat-engine-mcp/actions/workflows/release.yml/badge.svg)](https://github.com/gede-cahya/cheat-engine-mcp/releases)
+[![CI](https://github.com/DevC-x0/cheat-engine-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/DevC-x0/cheat-engine-mcp/actions/workflows/ci.yml)
+[![Release](https://github.com/DevC-x0/cheat-engine-mcp/actions/workflows/release.yml/badge.svg)](https://github.com/DevC-x0/cheat-engine-mcp/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Sponsor Gede Cahya](https://img.shields.io/badge/Sponsor-gede--cahya-pink?logo=github-sponsors)](https://github.com/sponsors/gede-cahya)
+[![Sponsor](https://img.shields.io/badge/Sponsor-DevC--x0-pink?logo=github-sponsors)](https://github.com/DevC-x0)
 
 
-**AI-powered game memory scanner and reverse engineering toolkit** — an MCP (Model Context Protocol) server that gives AI coding assistants direct access to `scanmem`, `gdb`, and IL2CPP reverse engineering tools.
+**AI-powered game memory scanner and reverse engineering toolkit** — an MCP (Model Context Protocol) server that gives AI coding assistants direct access to memory scanning, process memory editing, and IL2CPP reverse engineering tools across **Linux & Windows**.
 
-> Turn your AI assistant into a game hacking partner. Scan memory, hook functions, search IL2CPP metadata, and modify game values — all through natural language.
+> Turn your AI assistant into a game hacking partner. Scan memory, freeze values, search IL2CPP metadata, and modify game values — all through natural language.
 
 ---
 
 ## ✨ Features
 
-| Category | Tools | Description |
-|---|---|---|
-| 🔍 **Memory Scanning** | `scanmem_scan_*`, `session_*` | Exact, range, type-based, increased/decreased/changed value scanning |
-| ✏️ **Memory Writing** | `scanmem_write_*`, `scanmem_freeze_*` | Safe guarded writes with preview, dry-run, confirmation, and persistent freeze |
-| 🔬 **GDB Hooks** | `gdb_hook_*`, `gdb_probe_*` | Dynamic function hooking, breakpoint probes, disassembly preview |
-| 📖 **Memory Reading** | `memory_read_*` | Read bytes, ints, floats, and strings from process memory |
-| 🧬 **IL2CPP Reverse** | `il2cpp_*` | Search classes, methods, fields, strings, and RVA in Unity IL2CPP dumps |
-| 📊 **Cheat Tables** | `table_*` | Save/load/resolve/validate cheat entries with module+RVA tracking |
-| 📋 **Reports** | `reverse_report_*` | Create and manage local reverse engineering reports per game |
-| 🎯 **Process Utils** | `process_*`, `rva_*` | Process search, module listing, RVA/address conversion, memory maps |
+| Category | Tools | Description | Supported OS |
+|---|---|---|---|
+| 🔍 **Memory Scanning** | `scanmem_scan_*`, `session_*` | Exact, range, type-based, increased/decreased/changed value scanning | **Linux & Windows** |
+| ✏️ **Memory Writing** | `scanmem_write_*`, `scanmem_freeze_*` | Safe guarded writes with preview, dry-run, confirmation, and persistent freeze | **Linux & Windows** |
+| 📖 **Memory Reading** | `memory_read_*` | Read bytes, ints, floats, and strings from process memory | **Linux & Windows** |
+| 🧬 **IL2CPP Reverse** | `il2cpp_*` | Search classes, methods, fields, strings, and RVA in Unity IL2CPP dumps | **Linux & Windows** |
+| 📊 **Cheat Tables** | `table_*` | Save/load/resolve/validate cheat entries with module+RVA tracking | **Linux & Windows** |
+| 📋 **Reports** | `reverse_report_*` | Create and manage local reverse engineering reports per game | **Linux & Windows** |
+| 🎯 **Process Utils** | `process_*`, `rva_*` | Process search, module listing, RVA/address conversion, memory maps | **Linux & Windows** |
+| 🔬 **GDB Hooks** | `gdb_hook_*`, `gdb_probe_*` | Dynamic function hooking, breakpoint probes, disassembly preview | Linux only |
 
 **72 MCP tools** in total — all accessible via natural language through any MCP-compatible AI assistant.
 
@@ -33,39 +33,39 @@
 
 ### 1. Install Dependencies
 
+#### Linux
 ```bash
 # Arch Linux
 sudo pacman -S scanmem gdb rust
 
 # Debian / Ubuntu
 sudo apt update && sudo apt install -y scanmem gdb cargo
-
-# macOS (Homebrew) — limited support
-brew install rust
 ```
+
+#### Windows
+No external dependencies (`scanmem` or GDB) required! The memory engine runs natively via Win32 API (`kernel32.dll`).
+
+Install Rust if building from source:
+```powershell
+winget install Rustlang.Rustup
+```
+
+---
 
 ### 2. Install on Linux
 
 ```bash
-git clone https://github.com/gede-cahya/cheat-engine-mcp.git
+git clone https://github.com/DevC-x0/cheat-engine-mcp.git
 cd cheat-engine-mcp
 ./install.sh
 ```
 
 This builds the release binary and installs it to:
-
 ```bash
 ~/.local/bin/cheat-engine-mcp
 ```
 
-Check it:
-
-```bash
-~/.local/bin/cheat-engine-mcp --help
-```
-
 Add this MCP config to your client:
-
 ```json
 {
   "mcpServers": {
@@ -76,20 +76,14 @@ Add this MCP config to your client:
 }
 ```
 
+---
+
 ### 3. Install on Windows
 
-Windows support is limited to portable/non-Linux tools: `ping`, cheat tables, workspaces, IL2CPP artifact search, and reports. Memory scanning with `scanmem`, `/proc` process memory, and GDB attach tools are Linux-only.
-
-Install Rust first:
+Build the MCP server natively (or run `install-antigravity.ps1`):
 
 ```powershell
-winget install Rustlang.Rustup
-```
-
-Build the MCP server:
-
-```powershell
-git clone https://github.com/gede-cahya/cheat-engine-mcp.git
+git clone https://github.com/DevC-x0/cheat-engine-mcp.git
 cd cheat-engine-mcp
 cargo build --release
 ```
@@ -117,6 +111,11 @@ Add this MCP config to your client:
     }
   }
 }
+```
+
+Or run the automated setup script for Antigravity:
+```powershell
+.\install-antigravity.ps1
 ```
 
 ### 4. Connect to Your AI Assistant

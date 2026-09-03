@@ -21,7 +21,10 @@ if (!(Test-Path -Path $SkillDir)) {
     New-Item -ItemType Directory -Force -Path $SkillDir
 }
 Copy-Item -Path "skills\antigravity\SKILL.md" -Destination "$SkillDir\SKILL.md" -Force
-Write-Host "installed: $SkillDir\SKILL.md" -ForegroundColor Green
+if (Test-Path -Path "skills\antigravity\AGENTS.md") {
+    Copy-Item -Path "skills\antigravity\AGENTS.md" -Destination "$SkillDir\AGENTS.md" -Force
+}
+Write-Host "installed: $SkillDir\SKILL.md & AGENTS.md" -ForegroundColor Green
 
 # Configure settings.json
 $SettingsFile = Join-Path $env:USERPROFILE ".gemini\config\settings.json"

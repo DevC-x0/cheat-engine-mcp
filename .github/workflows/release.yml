@@ -3,56 +3,59 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
 
 permissions:
   contents: write
 
 jobs:
   build:
-    name: ${{ matrix.asset }}
+    name: Build binary (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
     strategy:
-      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
-            asset: x86_64-unknown-linux-gnu
-            bin: cheat-engine-mcp
-            package: tar.gz
+            target: x86_64-unknown-linux-gnu
+            binary_name: cheat-engine-mcp
+            asset_name: cheat-engine-mcp-linux-x86_64
           - os: windows-latest
-            asset: x86_64-pc-windows-msvc
-            bin: cheat-engine-mcp.exe
-            package: zip
+            target: x86_64-pc-windows-msvc
+            binary_name: cheat-engine-mcp.exe
+            asset_name: cheat-engine-mcp-windows-x86_64.exe
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo build --release
-      - name: Package Linux
-        if: matrix.package == 'tar.gz'
-        run: |
-          mkdir -p dist
-          cp target/release/${{ matrix.bin }} dist/
-          tar -C dist -czf cheat-engine-mcp-${{ github.ref_name }}-${{ matrix.asset }}.tar.gz ${{ matrix.bin }}
-      - name: Package Windows
-        if: matrix.package == 'zip'
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force dist | Out-Null
-          Copy-Item target/release/${{ matrix.bin }} dist/
-          Compress-Archive -Path dist/${{ matrix.bin }} -DestinationPath cheat-engine-mcp-${{ github.ref_name }}-${{ matrix.asset }}.zip
-      - uses: actions/upload-artifact@v4
         with:
-          name: cheat-engine-mcp-${{ matrix.asset }}
-          path: cheat-engine-mcp-${{ github.ref_name }}-${{ matrix.asset }}.*
+          targets: ${{ matrix.target }}
+      - name: Build release binary
+        run: cargo build --release --target ${{ matrix.target }}
+      - name: Rename binary for release
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          cp target/${{ matrix.target }}/release/${{ matrix.binary_name }} artifacts/${{ matrix.asset_name }}
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: artifacts/${{ matrix.asset_name }}
 
   publish:
+    name: Publish GitHub Release
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v4
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
         with:
-          path: artifacts
-      - uses: softprops/action-gh-release@v2
+          path: dist
+          merge-multiple: true
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/**/*
+          files: dist/*
+          draft: false
+          prerelease: false
+          generate_release_notes: true

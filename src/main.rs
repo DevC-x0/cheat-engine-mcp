@@ -1,4 +1,9 @@
 #![recursion_limit = "256"]
+#![cfg_attr(target_os = "windows", allow(dead_code, unused_variables, unused_imports))]
+
+pub mod native_scan;
+#[cfg(target_os = "windows")]
+pub mod windows;
 
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -66,6 +71,12 @@ impl Drop for FreezeLoop {
     }
 }
 
+#[cfg(target_os = "windows")]
+struct WindowsScanSession {
+    scan_type: native_scan::ScanType,
+    matches: Vec<native_scan::ScanMatch>,
+}
+
 struct Session {
     pid: u64,
     created_at: u64,
@@ -76,6 +87,8 @@ struct Session {
     frozen_value: Option<String>,
     freeze_loop: Option<FreezeLoop>,
     proc: Option<ScanmemProc>,
+    #[cfg(target_os = "windows")]
+    windows_scan: Option<WindowsScanSession>,
 }
 
 type Sessions = HashMap<u64, Session>;
@@ -431,39 +444,68 @@ fn output_warning(data: &Value) -> Vec<String> {
 }
 
 fn scanmem_version() -> Result<String, String> {
-    linux_only("scanmem backend")?;
-    let out = Command::new("scanmem")
-        .arg("--version")
-        .output()
-        .map_err(|err| format!("failed to run scanmem: {err}"))?;
-    let text = if out.stdout.is_empty() {
-        String::from_utf8_lossy(&out.stderr).to_string()
-    } else {
-        String::from_utf8_lossy(&out.stdout).to_string()
+    #[cfg(target_os = "windows")]
+    {
+        Ok("cheat-engine-mcp native windows engine v0.4.0 (Win32 VirtualQueryEx/RPM/WPM)".to_string())
     }
-    .trim()
-    .to_string();
-    if text.is_empty() {
-        Err("scanmem returned empty version output".to_string())
-    } else {
-        Ok(text)
+    #[cfg(target_os = "linux")]
+    {
+        linux_only("scanmem backend")?;
+        let out = Command::new("scanmem")
+            .arg("--version")
+            .output()
+            .map_err(|err| format!("failed to run scanmem: {err}"))?;
+        let text = if out.stdout.is_empty() {
+            String::from_utf8_lossy(&out.stderr).to_string()
+        } else {
+            String::from_utf8_lossy(&out.stdout).to_string()
+        }
+        .trim()
+        .to_string();
+        if text.is_empty() {
+            Err("scanmem returned empty version output".to_string())
+        } else {
+            Ok(text)
+        }
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    {
+        linux_only("scanmem backend")?;
+        Err("unsupported platform".to_string())
     }
 }
 
 fn list_processes(filter: Option<&str>) -> Result<Value, String> {
-    linux_only("process listing")?;
-    let text = command_output("ps", &["-eo", "pid=,comm="])?;
-    let filter = filter.unwrap_or("").to_lowercase();
-    let lines: Vec<&str> = text
-        .lines()
-        .filter(|line| filter.is_empty() || line.to_lowercase().contains(&filter))
-        .take(100)
-        .collect();
-    Ok(tool_ok(
-        &format!("Found {} process entries.", lines.len()),
-        json!({ "processes": lines }),
-        Some("Use a target PID with session_create or scanmem_exact_scan."),
-    ))
+    #[cfg(target_os = "windows")]
+    {
+        let lines = windows::list_processes(filter)?;
+        Ok(tool_ok(
+            &format!("Found {} process entries.", lines.len()),
+            json!({ "processes": lines }),
+            Some("Use a target PID with session_create or scanmem_scan_exact."),
+        ))
+    }
+    #[cfg(target_os = "linux")]
+    {
+        linux_only("process listing")?;
+        let text = command_output("ps", &["-eo", "pid=,comm="])?;
+        let filter = filter.unwrap_or("").to_lowercase();
+        let lines: Vec<&str> = text
+            .lines()
+            .filter(|line| filter.is_empty() || line.to_lowercase().contains(&filter))
+            .take(100)
+            .collect();
+        Ok(tool_ok(
+            &format!("Found {} process entries.", lines.len()),
+            json!({ "processes": lines }),
+            Some("Use a target PID with session_create or scanmem_exact_scan."),
+        ))
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    {
+        linux_only("process listing")?;
+        Err("unsupported platform".to_string())
+    }
 }
 
 fn scanmem_script_preview(args: &Value) -> Result<Value, String> {
@@ -476,16 +518,40 @@ fn scanmem_script_preview(args: &Value) -> Result<Value, String> {
 }
 
 fn scanmem_exact_scan(args: &Value, sessions: &mut Sessions) -> Result<Value, String> {
-    linux_only("scanmem backend")?;
     let (pid, value) = scan_args(args)?;
-    let sess = ensure_session(sessions, pid)?;
-    let output = scanmem_send(proc_of(sess)?, &value)?;
-    touch_session_on(sess, "exact", &output);
-    Ok(tool_ok(
-        "Exact scan completed.",
-        json!({ "pid": pid, "value": value, "output": output }),
-        Some("Change the value in the target app, then run a refine scan."),
-    ))
+    valid_live_pid(args)?;
+    #[cfg(target_os = "windows")]
+    {
+        let scan_type = native_scan::ScanType::detect(&value);
+        let target = native_scan::ParsedValue::parse(&value, scan_type)?;
+        let matches = windows::scan_process_memory_exact(pid, scan_type, &target)?;
+        let output = native_scan::format_scan_output(&matches, matches.len(), scan_type);
+        let sess = ensure_session(sessions, pid)?;
+        sess.windows_scan = Some(WindowsScanSession { scan_type, matches });
+        touch_session_on(sess, "exact", &output);
+        return Ok(tool_ok(
+            "Exact scan completed.",
+            json!({ "pid": pid, "value": value, "output": output }),
+            Some("Change the value in the target app, then run a refine scan."),
+        ));
+    }
+    #[cfg(target_os = "linux")]
+    {
+        linux_only("scanmem backend")?;
+        let sess = ensure_session(sessions, pid)?;
+        let output = scanmem_send(proc_of(sess)?, &value)?;
+        touch_session_on(sess, "exact", &output);
+        Ok(tool_ok(
+            "Exact scan completed.",
+            json!({ "pid": pid, "value": value, "output": output }),
+            Some("Change the value in the target app, then run a refine scan."),
+        ))
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    {
+        linux_only("scanmem backend")?;
+        Err("unsupported platform".to_string())
+    }
 }
 
 fn proc_of(sess: &mut Session) -> Result<&mut ScanmemProc, String> {
@@ -495,80 +561,177 @@ fn proc_of(sess: &mut Session) -> Result<&mut ScanmemProc, String> {
 }
 
 fn scanmem_write_value(args: &Value, sessions: &mut Sessions) -> Result<Value, String> {
-    linux_only("scanmem backend")?;
     if args.get("confirm_write").and_then(Value::as_bool) != Some(true) {
         return Err("confirm_write must be true because this changes process memory".to_string());
     }
     let pid = valid_live_pid(args)?;
     let current_value = valid_value_arg(args, "current_value")?;
     let new_value = valid_value_arg(args, "new_value")?;
-    let sess = ensure_session(sessions, pid)?;
-    let output = scanmem_send(proc_of(sess)?, &format!("{current_value}\nset {new_value}"))?;
-    touch_session_on(sess, "write_value", &output);
-    Ok(tool_ok(
-        "Write command completed.",
-        json!({ "pid": pid, "current_value": current_value, "new_value": new_value, "output": output }),
-        Some("Verify the target value changed."),
-    ))
+
+    #[cfg(target_os = "windows")]
+    {
+        let sess = ensure_session(sessions, pid)?;
+        let win_scan = sess.windows_scan.as_mut().ok_or_else(|| {
+            "no active scan found; run scanmem_scan_exact before writing".to_string()
+        })?;
+        if win_scan.matches.is_empty() {
+            return Err("no scan matches found to write".to_string());
+        }
+        let parsed_new = native_scan::ParsedValue::parse(&new_value, win_scan.scan_type)?;
+        let bytes = parsed_new.to_bytes();
+        for m in &win_scan.matches {
+            windows::write_process_memory(pid, m.address, &bytes)?;
+        }
+        let output = format!("wrote {} match(es)", win_scan.matches.len());
+        touch_session_on(sess, "write_value", &output);
+        return Ok(tool_ok(
+            "Write command completed.",
+            json!({ "pid": pid, "current_value": current_value, "new_value": new_value, "output": output }),
+            Some("Verify the target value changed."),
+        ));
+    }
+    #[cfg(target_os = "linux")]
+    {
+        linux_only("scanmem backend")?;
+        let sess = ensure_session(sessions, pid)?;
+        let output = scanmem_send(proc_of(sess)?, &format!("{current_value}\nset {new_value}"))?;
+        touch_session_on(sess, "write_value", &output);
+        Ok(tool_ok(
+            "Write command completed.",
+            json!({ "pid": pid, "current_value": current_value, "new_value": new_value, "output": output }),
+            Some("Verify the target value changed."),
+        ))
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    {
+        linux_only("scanmem backend")?;
+        Err("unsupported platform".to_string())
+    }
 }
 
 fn scanmem_preview_write(args: &Value, sessions: &mut Sessions) -> Result<Value, String> {
-    linux_only("scanmem backend")?;
     let pid = valid_live_pid(args)?;
     let current_value = valid_value_arg(args, "current_value")?;
     let new_value = valid_value_arg(args, "new_value")?;
     let max_writes = args.get("max_writes").and_then(Value::as_u64).unwrap_or(1);
-    let sess = ensure_session(sessions, pid)?;
-    let output = scanmem_send(proc_of(sess)?, &format!("{current_value}\nlist"))?;
-    let match_count = count_matches(&output);
-    touch_session_on(sess, "preview_write", &output);
-    Ok(tool_ok(
-        "Write preview completed.",
-        json!({ "pid": pid, "current_value": current_value, "backup_old_value": current_value, "new_value": new_value, "match_count": match_count, "max_writes": max_writes, "allowed": match_count > 0 && match_count as u64 <= max_writes, "dry_run": true, "output": output }),
-        Some("If allowed is true, run scanmem_write_selected with confirm_write=true."),
-    ))
+
+    #[cfg(target_os = "windows")]
+    {
+        let sess = ensure_session(sessions, pid)?;
+        let match_count = sess.windows_scan.as_ref().map(|s| s.matches.len()).unwrap_or(0);
+        let output = format!("{match_count} matches found.");
+        touch_session_on(sess, "preview_write", &output);
+        return Ok(tool_ok(
+            "Write preview completed.",
+            json!({ "pid": pid, "current_value": current_value, "backup_old_value": current_value, "new_value": new_value, "match_count": match_count, "max_writes": max_writes, "allowed": match_count > 0 && match_count as u64 <= max_writes, "dry_run": true, "output": output }),
+            Some("If allowed is true, run scanmem_write_selected with confirm_write=true."),
+        ));
+    }
+    #[cfg(target_os = "linux")]
+    {
+        linux_only("scanmem backend")?;
+        let sess = ensure_session(sessions, pid)?;
+        let output = scanmem_send(proc_of(sess)?, &format!("{current_value}\nlist"))?;
+        let match_count = count_matches(&output);
+        touch_session_on(sess, "preview_write", &output);
+        Ok(tool_ok(
+            "Write preview completed.",
+            json!({ "pid": pid, "current_value": current_value, "backup_old_value": current_value, "new_value": new_value, "match_count": match_count, "max_writes": max_writes, "allowed": match_count > 0 && match_count as u64 <= max_writes, "dry_run": true, "output": output }),
+            Some("If allowed is true, run scanmem_write_selected with confirm_write=true."),
+        ))
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    {
+        linux_only("scanmem backend")?;
+        Err("unsupported platform".to_string())
+    }
 }
 
 fn scanmem_write_selected(args: &Value, sessions: &mut Sessions) -> Result<Value, String> {
-    linux_only("scanmem backend")?;
     let pid = valid_pid(args)?;
     let current_value = valid_value_arg(args, "current_value")?;
     let new_value = valid_value_arg(args, "new_value")?;
     let confirm = args.get("confirm_write").and_then(Value::as_bool) == Some(true);
     let dry_run = args.get("dry_run").and_then(Value::as_bool) == Some(true);
     let max_writes = args.get("max_writes").and_then(Value::as_u64).unwrap_or(1);
-    let sess = ensure_session(sessions, pid)?;
-    let preview = scanmem_send(proc_of(sess)?, &format!("{current_value}\nlist"))?;
-    let match_count = count_matches(&preview);
     if !confirm {
         return Err("confirm_write must be true because this changes process memory".to_string());
     }
-    if match_count == 0 {
-        return Err("no scan matches found; write blocked".to_string());
-    }
-    if match_count as u64 > max_writes {
-        return Err(format!(
-            "{match_count} matches exceed max_writes={max_writes}; write blocked"
-        ));
-    }
-    if dry_run {
+
+    #[cfg(target_os = "windows")]
+    {
+        let sess = ensure_session(sessions, pid)?;
+        let win_scan = sess.windows_scan.as_mut().ok_or_else(|| {
+            "no active scan matches found; scan memory before writing".to_string()
+        })?;
+        let match_count = win_scan.matches.len();
+        if match_count == 0 {
+            return Err("no scan matches found; write blocked".to_string());
+        }
+        if match_count as u64 > max_writes {
+            return Err(format!(
+                "{match_count} matches exceed max_writes={max_writes}; write blocked"
+            ));
+        }
+        if dry_run {
+            return Ok(tool_ok(
+                "Dry run only; no memory changed.",
+                json!({ "pid": pid, "match_count": match_count, "backup_old_value": current_value, "preview": format!("{match_count} matches") }),
+                Some("Set dry_run=false or omit it to write."),
+            ));
+        }
+        let parsed_new = native_scan::ParsedValue::parse(&new_value, win_scan.scan_type)?;
+        let bytes = parsed_new.to_bytes();
+        let mut written_addresses = Vec::new();
+        for m in &win_scan.matches {
+            windows::write_process_memory(pid, m.address, &bytes)?;
+            written_addresses.push(format!("0x{:08x}", m.address));
+        }
+        let output = format!("wrote {} match(es)", match_count);
+        touch_session_on(sess, "write_selected", &output);
         return Ok(tool_ok(
-            "Dry run only; no memory changed.",
-            json!({ "pid": pid, "match_count": match_count, "backup_old_value": current_value, "preview": preview }),
-            Some("Set dry_run=false or omit it to write."),
+            "Selected write completed.",
+            json!({ "pid": pid, "current_value": current_value, "backup_old_value": current_value, "new_value": new_value, "match_count": match_count, "written_addresses": written_addresses, "output": output }),
+            Some("Verify the target value changed."),
         ));
     }
-    let output = scanmem_send(proc_of(sess)?, &format!("set {new_value}"))?;
-    touch_session_on(sess, "write_selected", &output);
-    Ok(tool_ok(
-        "Selected write completed.",
-        json!({ "pid": pid, "current_value": current_value, "backup_old_value": current_value, "new_value": new_value, "match_count": match_count, "output": output }),
-        Some("Verify the target value changed."),
-    ))
+    #[cfg(target_os = "linux")]
+    {
+        linux_only("scanmem backend")?;
+        let sess = ensure_session(sessions, pid)?;
+        let preview = scanmem_send(proc_of(sess)?, &format!("{current_value}\nlist"))?;
+        let match_count = count_matches(&preview);
+        if match_count == 0 {
+            return Err("no scan matches found; write blocked".to_string());
+        }
+        if match_count as u64 > max_writes {
+            return Err(format!(
+                "{match_count} matches exceed max_writes={max_writes}; write blocked"
+            ));
+        }
+        if dry_run {
+            return Ok(tool_ok(
+                "Dry run only; no memory changed.",
+                json!({ "pid": pid, "match_count": match_count, "backup_old_value": current_value, "preview": preview }),
+                Some("Set dry_run=false or omit it to write."),
+            ));
+        }
+        let output = scanmem_send(proc_of(sess)?, &format!("set {new_value}"))?;
+        touch_session_on(sess, "write_selected", &output);
+        Ok(tool_ok(
+            "Selected write completed.",
+            json!({ "pid": pid, "current_value": current_value, "backup_old_value": current_value, "new_value": new_value, "match_count": match_count, "output": output }),
+            Some("Verify the target value changed."),
+        ))
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    {
+        linux_only("scanmem backend")?;
+        Err("unsupported platform".to_string())
+    }
 }
 
 fn scanmem_freeze_value(args: &Value, sessions: &mut Sessions) -> Result<Value, String> {
-    linux_only("scanmem backend")?;
     let pid = valid_live_pid(args)?;
     let current_value = valid_value_arg(args, "current_value")?;
     let freeze_value = valid_value_arg(args, "freeze_value")?;
@@ -597,21 +760,73 @@ fn scanmem_freeze_value(args: &Value, sessions: &mut Sessions) -> Result<Value, 
         return Err("confirm_write must be true because this changes process memory".to_string());
     }
     let interval_ms = freeze_interval_ms(args);
-    let (loop_handle, match_count) = start_freeze_loop(
-        pid,
-        current_value.clone(),
-        freeze_value.clone(),
-        max_writes,
-        interval_ms,
-    )?;
-    let session = sessions.entry(pid).or_insert_with(|| new_session(pid));
-    session.frozen_value = Some(freeze_value.clone());
-    session.freeze_loop = Some(loop_handle);
-    Ok(tool_ok(
-        "Persistent freeze loop started.",
-        json!({ "pid": pid, "current_value": current_value, "frozen_value": freeze_value, "match_count": match_count, "max_writes": max_writes, "interval_ms": interval_ms, "persistent_loop": true }),
-        Some("Call scanmem_unfreeze_value or session_close to stop the loop."),
-    ))
+
+    #[cfg(target_os = "windows")]
+    {
+        let sess = ensure_session(sessions, pid)?;
+        let win_scan = sess.windows_scan.as_ref().ok_or_else(|| {
+            "no active scan matches found; scan memory before freezing".to_string()
+        })?;
+        let match_count = win_scan.matches.len();
+        if match_count == 0 {
+            return Err("no scan matches found; freeze blocked".to_string());
+        }
+        if match_count as u64 > max_writes {
+            return Err(format!(
+                "{match_count} matches exceed max_writes={max_writes}; freeze blocked"
+            ));
+        }
+        let parsed = native_scan::ParsedValue::parse(&freeze_value, win_scan.scan_type)?;
+        let bytes = parsed.to_bytes();
+        let target_addresses: Vec<u64> = win_scan.matches.iter().map(|m| m.address).collect();
+        let stop = Arc::new(AtomicBool::new(false));
+        let thread_stop = Arc::clone(&stop);
+        let thread = thread::spawn(move || {
+            while !thread_stop.load(Ordering::Relaxed) {
+                for addr in &target_addresses {
+                    let _ = windows::write_process_memory(pid, *addr, &bytes);
+                }
+                for _ in 0..interval_ms.div_ceil(100) {
+                    if thread_stop.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    thread::sleep(Duration::from_millis(100));
+                }
+            }
+        });
+        let loop_handle = FreezeLoop { stop, thread: Some(thread) };
+        sess.frozen_value = Some(freeze_value.clone());
+        sess.freeze_loop = Some(loop_handle);
+        return Ok(tool_ok(
+            "Persistent freeze loop started.",
+            json!({ "pid": pid, "current_value": current_value, "frozen_value": freeze_value, "match_count": match_count, "max_writes": max_writes, "interval_ms": interval_ms, "persistent_loop": true }),
+            Some("Call scanmem_unfreeze_value or session_close to stop the loop."),
+        ));
+    }
+    #[cfg(target_os = "linux")]
+    {
+        linux_only("scanmem backend")?;
+        let (loop_handle, match_count) = start_freeze_loop(
+            pid,
+            current_value.clone(),
+            freeze_value.clone(),
+            max_writes,
+            interval_ms,
+        )?;
+        let session = sessions.entry(pid).or_insert_with(|| new_session(pid));
+        session.frozen_value = Some(freeze_value.clone());
+        session.freeze_loop = Some(loop_handle);
+        Ok(tool_ok(
+            "Persistent freeze loop started.",
+            json!({ "pid": pid, "current_value": current_value, "frozen_value": freeze_value, "match_count": match_count, "max_writes": max_writes, "interval_ms": interval_ms, "persistent_loop": true }),
+            Some("Call scanmem_unfreeze_value or session_close to stop the loop."),
+        ))
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    {
+        linux_only("scanmem backend")?;
+        Err("unsupported platform".to_string())
+    }
 }
 
 fn freeze_interval_ms(args: &Value) -> u64 {
@@ -682,24 +897,47 @@ fn scanmem_unfreeze_value(args: &Value, sessions: &mut Sessions) -> Result<Value
 }
 
 fn scanmem_scan_by_type(args: &Value, sessions: &mut Sessions) -> Result<Value, String> {
-    linux_only("scanmem backend")?;
-    let pid = valid_pid(args)?;
+    let pid = valid_live_pid(args)?;
     let value = valid_value_arg(args, "value")?;
     let value_type = valid_value_type(args)?;
-    let scan_value = typed_value(&value, &value_type);
-    let sess = ensure_session(sessions, pid)?;
-    let output = scanmem_send(proc_of(sess)?, &scan_value)?;
-    touch_session_on(sess, &format!("scan_by_type:{value_type}"), &output);
-    Ok(tool_ok(
-        "Typed scan completed.",
-        json!({ "pid": pid, "value": value, "value_type": value_type, "scan_value": scan_value, "output": output }),
-        Some("Refine or list matches next."),
-    ))
+
+    #[cfg(target_os = "windows")]
+    {
+        let scan_type = native_scan::ScanType::from_str(&value_type).unwrap_or(native_scan::ScanType::Int32);
+        let target = native_scan::ParsedValue::parse(&value, scan_type)?;
+        let matches = windows::scan_process_memory_exact(pid, scan_type, &target)?;
+        let output = native_scan::format_scan_output(&matches, matches.len(), scan_type);
+        let sess = ensure_session(sessions, pid)?;
+        sess.windows_scan = Some(WindowsScanSession { scan_type, matches });
+        touch_session_on(sess, &format!("scan_by_type:{value_type}"), &output);
+        return Ok(tool_ok(
+            "Typed scan completed.",
+            json!({ "pid": pid, "value": value, "value_type": value_type, "scan_value": value, "output": output }),
+            Some("Refine or list matches next."),
+        ));
+    }
+    #[cfg(target_os = "linux")]
+    {
+        linux_only("scanmem backend")?;
+        let scan_value = typed_value(&value, &value_type);
+        let sess = ensure_session(sessions, pid)?;
+        let output = scanmem_send(proc_of(sess)?, &scan_value)?;
+        touch_session_on(sess, &format!("scan_by_type:{value_type}"), &output);
+        Ok(tool_ok(
+            "Typed scan completed.",
+            json!({ "pid": pid, "value": value, "value_type": value_type, "scan_value": scan_value, "output": output }),
+            Some("Refine or list matches next."),
+        ))
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    {
+        linux_only("scanmem backend")?;
+        Err("unsupported platform".to_string())
+    }
 }
 
 fn scanmem_scan_range(args: &Value, sessions: &mut Sessions) -> Result<Value, String> {
-    linux_only("scanmem backend")?;
-    let pid = valid_pid(args)?;
+    let pid = valid_live_pid(args)?;
     let min = valid_value_arg(args, "min")?;
     let max = valid_value_arg(args, "max")?;
     let value_type = args
@@ -707,43 +945,99 @@ fn scanmem_scan_range(args: &Value, sessions: &mut Sessions) -> Result<Value, St
         .and_then(Value::as_str)
         .unwrap_or("auto")
         .to_string();
-    if value_type != "auto" {
-        valid_value_type(args)?;
+
+    #[cfg(target_os = "windows")]
+    {
+        let scan_type = if value_type == "auto" {
+            native_scan::ScanType::detect(&min)
+        } else {
+            native_scan::ScanType::from_str(&value_type).unwrap_or(native_scan::ScanType::Int32)
+        };
+        let low = native_scan::ParsedValue::parse(&min, scan_type)?;
+        let high = native_scan::ParsedValue::parse(&max, scan_type)?;
+        let matches = windows::scan_process_memory_range(pid, scan_type, &low, &high)?;
+        let output = native_scan::format_scan_output(&matches, matches.len(), scan_type);
+        let sess = ensure_session(sessions, pid)?;
+        sess.windows_scan = Some(WindowsScanSession { scan_type, matches });
+        touch_session_on(sess, &format!("scan_range:{value_type}"), &output);
+        return Ok(tool_ok(
+            "Range scan completed.",
+            json!({ "pid": pid, "min": min, "max": max, "value_type": value_type, "scan_value": format!("{min}..{max}"), "output": output }),
+            Some("Use scanmem_scan_increased/decreased/changed to refine."),
+        ));
     }
-    let scan_value = format!("{min}..{max}");
-    let sess = ensure_session(sessions, pid)?;
-    let output = scanmem_send(proc_of(sess)?, &scan_value)?;
-    touch_session_on(sess, &format!("scan_range:{value_type}"), &output);
-    Ok(tool_ok(
-        "Range scan completed.",
-        json!({ "pid": pid, "min": min, "max": max, "value_type": value_type, "scan_value": scan_value, "output": output }),
-        Some("Use scanmem_scan_increased/decreased/changed to refine."),
-    ))
+    #[cfg(target_os = "linux")]
+    {
+        linux_only("scanmem backend")?;
+        if value_type != "auto" {
+            valid_value_type(args)?;
+        }
+        let scan_value = format!("{min}..{max}");
+        let sess = ensure_session(sessions, pid)?;
+        let output = scanmem_send(proc_of(sess)?, &scan_value)?;
+        touch_session_on(sess, &format!("scan_range:{value_type}"), &output);
+        Ok(tool_ok(
+            "Range scan completed.",
+            json!({ "pid": pid, "min": min, "max": max, "value_type": value_type, "scan_value": scan_value, "output": output }),
+            Some("Use scanmem_scan_increased/decreased/changed to refine."),
+        ))
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    {
+        linux_only("scanmem backend")?;
+        Err("unsupported platform".to_string())
+    }
 }
 
 fn scanmem_scan_unknown(args: &Value, sessions: &mut Sessions) -> Result<Value, String> {
-    linux_only("scanmem backend")?;
-    let pid = valid_pid(args)?;
+    let pid = valid_live_pid(args)?;
     let value_type = args
         .get("value_type")
         .and_then(Value::as_str)
         .unwrap_or("auto")
         .to_string();
-    if value_type != "auto" {
-        valid_value_type(args)?;
+
+    #[cfg(target_os = "windows")]
+    {
+        let scan_type = if value_type == "auto" {
+            native_scan::ScanType::Int32
+        } else {
+            native_scan::ScanType::from_str(&value_type).unwrap_or(native_scan::ScanType::Int32)
+        };
+        let matches = windows::scan_process_memory_unknown(pid, scan_type)?;
+        let output = native_scan::format_scan_output(&matches, matches.len(), scan_type);
+        let sess = ensure_session(sessions, pid)?;
+        sess.windows_scan = Some(WindowsScanSession { scan_type, matches });
+        touch_session_on(sess, &format!("scan_unknown:{value_type}"), &output);
+        return Ok(tool_ok(
+            "Unknown initial value scan completed.",
+            json!({ "pid": pid, "value_type": value_type, "output": output }),
+            Some("Change the target value, then run increased/decreased/changed scan."),
+        ));
     }
-    let sess = ensure_session(sessions, pid)?;
-    let output = scanmem_send(proc_of(sess)?, "snapshot")?;
-    touch_session_on(sess, &format!("scan_unknown:{value_type}"), &output);
-    Ok(tool_ok(
-        "Unknown initial value scan completed.",
-        json!({ "pid": pid, "value_type": value_type, "output": output }),
-        Some("Change the target value, then run increased/decreased/changed scan."),
-    ))
+    #[cfg(target_os = "linux")]
+    {
+        linux_only("scanmem backend")?;
+        if value_type != "auto" {
+            valid_value_type(args)?;
+        }
+        let sess = ensure_session(sessions, pid)?;
+        let output = scanmem_send(proc_of(sess)?, "snapshot")?;
+        touch_session_on(sess, &format!("scan_unknown:{value_type}"), &output);
+        Ok(tool_ok(
+            "Unknown initial value scan completed.",
+            json!({ "pid": pid, "value_type": value_type, "output": output }),
+            Some("Change the target value, then run increased/decreased/changed scan."),
+        ))
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    {
+        linux_only("scanmem backend")?;
+        Err("unsupported platform".to_string())
+    }
 }
 
 fn process_search(args: &Value) -> Result<Value, String> {
-    linux_only("process listing")?;
     let query = args
         .get("query")
         .and_then(Value::as_str)
@@ -753,40 +1047,91 @@ fn process_search(args: &Value) -> Result<Value, String> {
         .get("include_system")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let text = command_output("ps", &["-eo", "pid=,comm=,args="])?;
-    let processes: Vec<Value> = text
-        .lines()
-        .filter_map(parse_process_line)
-        .filter(|p| include_system || !is_system_process(p))
-        .filter(|p| query.is_empty() || p.to_string().to_lowercase().contains(&query))
-        .take(50)
-        .collect();
-    Ok(tool_ok(
-        &format!("Found {} candidate process(es).", processes.len()),
-        json!({"processes": processes}),
-        Some("Use process_info or process_suggest_target before attaching."),
-    ))
+
+    #[cfg(target_os = "windows")]
+    {
+        let lines = windows::list_processes(Some(&query))?;
+        let mut processes = Vec::new();
+        for line in lines {
+            let mut parts = line.split_whitespace();
+            if let Some(pid_str) = parts.next() {
+                if let Ok(pid) = pid_str.parse::<u64>() {
+                    let comm = parts.collect::<Vec<_>>().join(" ");
+                    processes.push(json!({
+                        "pid": pid,
+                        "comm": comm,
+                        "cmdline": comm
+                    }));
+                }
+            }
+        }
+        return Ok(tool_ok(
+            &format!("Found {} candidate process(es).", processes.len()),
+            json!({"processes": processes}),
+            Some("Use process_info or process_suggest_target before attaching."),
+        ));
+    }
+    #[cfg(target_os = "linux")]
+    {
+        linux_only("process listing")?;
+        let text = command_output("ps", &["-eo", "pid=,comm=,args="])?;
+        let processes: Vec<Value> = text
+            .lines()
+            .filter_map(parse_process_line)
+            .filter(|p| include_system || !is_system_process(p))
+            .filter(|p| query.is_empty() || p.to_string().to_lowercase().contains(&query))
+            .take(50)
+            .collect();
+        Ok(tool_ok(
+            &format!("Found {} candidate process(es).", processes.len()),
+            json!({"processes": processes}),
+            Some("Use process_info or process_suggest_target before attaching."),
+        ))
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    {
+        linux_only("process listing")?;
+        Err("unsupported platform".to_string())
+    }
 }
 
 fn process_info(args: &Value) -> Result<Value, String> {
-    linux_only("process info")?;
     let pid = valid_live_pid(args)?;
-    let status = fs::read_to_string(format!("/proc/{pid}/status")).unwrap_or_default();
-    let comm = fs::read_to_string(format!("/proc/{pid}/comm"))
-        .unwrap_or_default()
-        .trim()
-        .to_string();
-    let cmdline = fs::read(format!("/proc/{pid}/cmdline")).unwrap_or_default();
-    let cmdline = String::from_utf8_lossy(&cmdline)
-        .replace('\0', " ")
-        .trim()
-        .to_string();
-    let uid = status.lines().find(|l| l.starts_with("Uid:")).unwrap_or("");
-    Ok(tool_ok(
-        "Process info loaded.",
-        json!({"pid": pid, "name": comm, "cmdline": cmdline, "uid": uid, "likely_game": likely_game(&cmdline)}),
-        Some("If this is the target, run session_create."),
-    ))
+
+    #[cfg(target_os = "windows")]
+    {
+        let info = windows::get_process_info(pid)?;
+        Ok(tool_ok(
+            "Process info loaded.",
+            info,
+            Some("If this is the target, run session_create."),
+        ))
+    }
+    #[cfg(target_os = "linux")]
+    {
+        linux_only("process info")?;
+        let status = fs::read_to_string(format!("/proc/{pid}/status")).unwrap_or_default();
+        let comm = fs::read_to_string(format!("/proc/{pid}/comm"))
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        let cmdline = fs::read(format!("/proc/{pid}/cmdline")).unwrap_or_default();
+        let cmdline = String::from_utf8_lossy(&cmdline)
+            .replace('\0', " ")
+            .trim()
+            .to_string();
+        let uid = status.lines().find(|l| l.starts_with("Uid:")).unwrap_or("");
+        Ok(tool_ok(
+            "Process info loaded.",
+            json!({"pid": pid, "name": comm, "cmdline": cmdline, "uid": uid, "likely_game": likely_game(&cmdline)}),
+            Some("If this is the target, run session_create."),
+        ))
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    {
+        linux_only("process info")?;
+        Err("unsupported platform".to_string())
+    }
 }
 
 fn process_suggest_target(args: &Value) -> Result<Value, String> {
@@ -810,7 +1155,6 @@ fn process_suggest_target(args: &Value) -> Result<Value, String> {
 }
 
 fn process_list_modules(args: &Value) -> Result<Value, String> {
-    linux_only("process modules")?;
     let pid = valid_live_pid(args)?;
     let filter = args
         .get("filter")
@@ -833,7 +1177,6 @@ fn process_list_modules(args: &Value) -> Result<Value, String> {
 }
 
 fn process_read_maps(args: &Value) -> Result<Value, String> {
-    linux_only("process maps")?;
     let pid = valid_live_pid(args)?;
     let filter = args
         .get("filter")
@@ -1089,40 +1432,60 @@ fn memory_read_count(args: &Value, default: usize) -> usize {
 }
 
 fn read_process_memory(pid: u64, address: u64, len: usize) -> Result<(Vec<u8>, Value), String> {
-    linux_only("process memory reads")?;
     if len == 0 || len > MEMORY_READ_MAX_BYTES {
         return Err(format!("read length must be 1..{MEMORY_READ_MAX_BYTES}"));
     }
-    let end = address
-        .checked_add(len as u64)
-        .ok_or_else(|| "address + length overflowed".to_string())?;
-    let maps = read_maps_entries(pid)?;
-    let m = maps
-        .iter()
-        .find(|m| m.start <= address && address < m.end)
-        .ok_or_else(|| format!("address {} is not in any mapped region", hex(address)))?;
-    if !m.perms.starts_with('r') {
-        return Err(format!(
-            "address {} is not in a readable mapping",
-            hex(address)
-        ));
+    #[cfg(target_os = "windows")]
+    {
+        let bytes = windows::read_process_memory(pid, address, len)?;
+        let mapping = json!({
+            "start": hex(address),
+            "end": hex(address + bytes.len() as u64),
+            "perms": "r--",
+            "size": bytes.len(),
+            "path": "[windows process memory]"
+        });
+        Ok((bytes, mapping))
     }
-    if end > m.end {
-        return Err(format!(
-            "read crosses mapping end: {} > {}",
-            hex(end),
-            hex(m.end)
-        ));
+    #[cfg(target_os = "linux")]
+    {
+        linux_only("process memory reads")?;
+        let end = address
+            .checked_add(len as u64)
+            .ok_or_else(|| "address + length overflowed".to_string())?;
+        let maps = read_maps_entries(pid)?;
+        let m = maps
+            .iter()
+            .find(|m| m.start <= address && address < m.end)
+            .ok_or_else(|| format!("address {} is not in any mapped region", hex(address)))?;
+        if !m.perms.starts_with('r') {
+            return Err(format!(
+                "address {} is not in a readable mapping",
+                hex(address)
+            ));
+        }
+        if end > m.end {
+            return Err(format!(
+                "read crosses mapping end: {} > {}",
+                hex(end),
+                hex(m.end)
+            ));
+        }
+        let mut file = std::fs::File::open(format!("/proc/{pid}/mem")).map_err(|e| e.to_string())?;
+        let mut bytes = vec![0; len];
+        file.seek(SeekFrom::Start(address))
+            .map_err(|e| format!("memory seek failed: {e}"))?;
+        let n = file
+            .read(&mut bytes)
+            .map_err(|e| format!("memory read failed: {e}"))?;
+        bytes.truncate(n);
+        Ok((bytes, map_entry_json(m)))
     }
-    let mut file = std::fs::File::open(format!("/proc/{pid}/mem")).map_err(|e| e.to_string())?;
-    let mut bytes = vec![0; len];
-    file.seek(SeekFrom::Start(address))
-        .map_err(|e| format!("memory seek failed: {e}"))?;
-    let n = file
-        .read(&mut bytes)
-        .map_err(|e| format!("memory read failed: {e}"))?;
-    bytes.truncate(n);
-    Ok((bytes, map_entry_json(m)))
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    {
+        linux_only("process memory reads")?;
+        Err("unsupported platform".to_string())
+    }
 }
 
 fn bytes_hex(bytes: &[u8]) -> String {
@@ -2563,37 +2926,64 @@ struct MapEntry {
 }
 
 fn read_maps_entries(pid: u64) -> Result<Vec<MapEntry>, String> {
-    let maps = fs::read_to_string(format!("/proc/{pid}/maps")).map_err(|e| e.to_string())?;
-    let mut entries = Vec::new();
-    for line in maps.lines() {
-        let mut parts = line.split_whitespace();
-        let Some(range) = parts.next() else { continue };
-        let Some(perms) = parts.next() else { continue };
-        let offset = parts.next().unwrap_or("").to_string();
-        let dev = parts.next().unwrap_or("").to_string();
-        let inode = parts.next().unwrap_or("").to_string();
-        let path = parts.collect::<Vec<_>>().join(" ");
-        let Some((start, end)) = range.split_once('-') else {
-            continue;
-        };
-        let Ok(start) = u64::from_str_radix(start, 16) else {
-            continue;
-        };
-        let Ok(end) = u64::from_str_radix(end, 16) else {
-            continue;
-        };
-        entries.push(MapEntry {
-            start,
-            end,
-            perms: perms.to_string(),
-            offset,
-            dev,
-            inode,
-            path,
-            raw: line.to_string(),
-        });
+    #[cfg(target_os = "windows")]
+    {
+        let regions = windows::query_memory_regions(pid, false)?;
+        let mut entries = Vec::new();
+        for r in regions {
+            let raw = format!("{:08x}-{:08x} {} {:x}", r.start, r.end, r.perms, r.size);
+            entries.push(MapEntry {
+                start: r.start,
+                end: r.end,
+                perms: r.perms,
+                offset: "0".to_string(),
+                dev: "".to_string(),
+                inode: "".to_string(),
+                path: "[virtual memory]".to_string(),
+                raw,
+            });
+        }
+        Ok(entries)
     }
-    Ok(entries)
+    #[cfg(target_os = "linux")]
+    {
+        let maps = fs::read_to_string(format!("/proc/{pid}/maps")).map_err(|e| e.to_string())?;
+        let mut entries = Vec::new();
+        for line in maps.lines() {
+            let mut parts = line.split_whitespace();
+            let Some(range) = parts.next() else { continue };
+            let Some(perms) = parts.next() else { continue };
+            let offset = parts.next().unwrap_or("").to_string();
+            let dev = parts.next().unwrap_or("").to_string();
+            let inode = parts.next().unwrap_or("").to_string();
+            let path = parts.collect::<Vec<_>>().join(" ");
+            let Some((start, end)) = range.split_once('-') else {
+                continue;
+            };
+            let Ok(start) = u64::from_str_radix(start, 16) else {
+                continue;
+            };
+            let Ok(end) = u64::from_str_radix(end, 16) else {
+                continue;
+            };
+            entries.push(MapEntry {
+                start,
+                end,
+                perms: perms.to_string(),
+                offset,
+                dev,
+                inode,
+                path,
+                raw: line.to_string(),
+            });
+        }
+        Ok(entries)
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    {
+        linux_only("process maps")?;
+        Err("unsupported platform".to_string())
+    }
 }
 
 fn map_entry_json(m: &MapEntry) -> Value {
@@ -2610,38 +3000,56 @@ fn map_entry_json(m: &MapEntry) -> Value {
 }
 
 fn read_modules(pid: u64) -> Result<Vec<ModuleMap>, String> {
-    let maps = fs::read_to_string(format!("/proc/{pid}/maps")).map_err(|e| e.to_string())?;
-    let mut modules = Vec::new();
-    for line in maps.lines() {
-        let mut parts = line.split_whitespace();
-        let Some(range) = parts.next() else { continue };
-        let Some(perms) = parts.next() else { continue };
-        let _offset = parts.next();
-        let _dev = parts.next();
-        let _inode = parts.next();
-        let path = parts.collect::<Vec<_>>().join(" ");
-        if path.is_empty() || path.starts_with('[') {
-            continue;
-        }
-        let Some((start, end)) = range.split_once('-') else {
-            continue;
-        };
-        let Ok(base) = u64::from_str_radix(start, 16) else {
-            continue;
-        };
-        let Ok(end) = u64::from_str_radix(end, 16) else {
-            continue;
-        };
-        modules.push(ModuleMap {
-            base,
-            end,
-            perms: perms.to_string(),
-            path,
-        });
+    #[cfg(target_os = "windows")]
+    {
+        let mods = windows::list_modules(pid)?;
+        Ok(mods.into_iter().map(|m| ModuleMap {
+            base: m.base,
+            end: m.base.saturating_add(m.size),
+            perms: "r-x".to_string(),
+            path: if m.path.is_empty() { m.name } else { m.path },
+        }).collect())
     }
-    modules.sort_by_key(|m| (m.path.clone(), m.base));
-    modules.dedup_by(|a, b| a.path == b.path);
-    Ok(modules)
+    #[cfg(target_os = "linux")]
+    {
+        let maps = fs::read_to_string(format!("/proc/{pid}/maps")).map_err(|e| e.to_string())?;
+        let mut modules = Vec::new();
+        for line in maps.lines() {
+            let mut parts = line.split_whitespace();
+            let Some(range) = parts.next() else { continue };
+            let Some(perms) = parts.next() else { continue };
+            let _offset = parts.next();
+            let _dev = parts.next();
+            let _inode = parts.next();
+            let path = parts.collect::<Vec<_>>().join(" ");
+            if path.is_empty() || path.starts_with('[') {
+                continue;
+            }
+            let Some((start, end)) = range.split_once('-') else {
+                continue;
+            };
+            let Ok(base) = u64::from_str_radix(start, 16) else {
+                continue;
+            };
+            let Ok(end) = u64::from_str_radix(end, 16) else {
+                continue;
+            };
+            modules.push(ModuleMap {
+                base,
+                end,
+                perms: perms.to_string(),
+                path,
+            });
+        }
+        modules.sort_by_key(|m| (m.path.clone(), m.base));
+        modules.dedup_by(|a, b| a.path == b.path);
+        Ok(modules)
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    {
+        linux_only("process modules")?;
+        Err("unsupported platform".to_string())
+    }
 }
 
 fn find_module(pid: u64, module: &str) -> Result<ModuleMap, String> {
@@ -2958,15 +3366,32 @@ fn write_json(path: &PathBuf, data: &Value) -> Result<(), String> {
 }
 
 fn scanmem_attach_process(args: &Value, sessions: &mut Sessions) -> Result<Value, String> {
-    let pid = valid_pid(args)?;
+    let pid = valid_live_pid(args)?;
     let sess = ensure_session(sessions, pid)?;
-    let output = scanmem_send(proc_of(sess)?, "list")?;
-    touch_session_on(sess, "attach", &output);
-    Ok(tool_ok(
-        "Process selected by scanmem.",
-        json!({ "pid": pid, "output": output }),
-        Some("Run scanmem_scan_exact or scanmem_reset_scan next."),
-    ))
+    #[cfg(target_os = "windows")]
+    {
+        touch_session_on(sess, "attach", "attached to process");
+        return Ok(tool_ok(
+            "Process selected by cheat-engine-mcp native engine.",
+            json!({ "pid": pid, "output": "attached to process (windows)" }),
+            Some("Run scanmem_scan_exact or scanmem_reset_scan next."),
+        ));
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let output = scanmem_send(proc_of(sess)?, "list")?;
+        touch_session_on(sess, "attach", &output);
+        Ok(tool_ok(
+            "Process selected by scanmem.",
+            json!({ "pid": pid, "output": output }),
+            Some("Run scanmem_scan_exact or scanmem_reset_scan next."),
+        ))
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    {
+        linux_only("scanmem backend")?;
+        Err("unsupported platform".to_string())
+    }
 }
 
 fn scanmem_simple_command(
@@ -2981,20 +3406,53 @@ fn scanmem_simple_command(
         .and_then(Value::as_str)
         .map(|_| valid_value_arg(args, "value"))
         .transpose()?;
-    let mut script = String::new();
-    if let Some(value) = prefix {
-        script.push_str(&value);
-        script.push('\n');
+
+    #[cfg(target_os = "windows")]
+    {
+        let sess = ensure_session(sessions, pid)?;
+        let output = match command {
+            "reset" => {
+                sess.windows_scan = None;
+                "reset completed".to_string()
+            }
+            "list" => {
+                if let Some(win_scan) = &sess.windows_scan {
+                    native_scan::format_scan_output(&win_scan.matches, win_scan.matches.len(), win_scan.scan_type)
+                } else {
+                    "0 matches found.".to_string()
+                }
+            }
+            other => format!("command {other} not needed on windows engine"),
+        };
+        touch_session_on(sess, command, &output);
+        return Ok(tool_ok(
+            message,
+            json!({ "pid": pid, "output": output }),
+            None,
+        ));
     }
-    script.push_str(command);
-    let sess = ensure_session(sessions, pid)?;
-    let output = scanmem_send(proc_of(sess)?, &script)?;
-    touch_session_on(sess, command, &output);
-    Ok(tool_ok(
-        message,
-        json!({ "pid": pid, "output": output }),
-        None,
-    ))
+    #[cfg(target_os = "linux")]
+    {
+        let mut script = String::new();
+        if let Some(value) = prefix {
+            script.push_str(&value);
+            script.push('\n');
+        }
+        script.push_str(command);
+        let sess = ensure_session(sessions, pid)?;
+        let output = scanmem_send(proc_of(sess)?, &script)?;
+        touch_session_on(sess, command, &output);
+        Ok(tool_ok(
+            message,
+            json!({ "pid": pid, "output": output }),
+            None,
+        ))
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    {
+        linux_only("scanmem backend")?;
+        Err("unsupported platform".to_string())
+    }
 }
 
 fn scanmem_refine_scan(
@@ -3003,26 +3461,53 @@ fn scanmem_refine_scan(
     message: &str,
     sessions: &mut Sessions,
 ) -> Result<Value, String> {
-    let pid = valid_pid(args)?;
-    // ponytail: initial_value unused — stateful refine relies on prior scan/snapshot
-    // in the same persistent scanmem child. Re-sending the value would do an exact scan
-    // and wipe the snapshot.
-    let initial_value = valid_value_arg(args, "initial_value")?;
-    let op = match command {
-        "+" => ">",
-        "-" => "<",
-        "changed" => "!=",
-        "unchanged" => "=",
-        other => other,
-    };
-    let sess = ensure_session(sessions, pid)?;
-    let output = scanmem_send(proc_of(sess)?, op)?;
-    touch_session_on(sess, command, &output);
-    Ok(tool_ok(
-        message,
-        json!({ "pid": pid, "initial_value": initial_value, "refine": command, "output": output }),
-        Some("Use scanmem_list_matches or refine again."),
-    ))
+    let pid = valid_live_pid(args)?;
+    let initial_value = valid_value_arg(args, "initial_value").unwrap_or_default();
+
+    #[cfg(target_os = "windows")]
+    {
+        let sess = ensure_session(sessions, pid)?;
+        let win_scan = sess.windows_scan.as_mut().ok_or_else(|| {
+            "no active scan found; run scanmem_scan_exact before refining".to_string()
+        })?;
+        let count = windows::refine_scan_matches(
+            pid,
+            &mut win_scan.matches,
+            win_scan.scan_type,
+            command,
+            None,
+        )?;
+        let output = native_scan::format_scan_output(&win_scan.matches, count, win_scan.scan_type);
+        touch_session_on(sess, command, &output);
+        return Ok(tool_ok(
+            message,
+            json!({ "pid": pid, "initial_value": initial_value, "refine": command, "output": output }),
+            Some("Use scanmem_list_matches or refine again."),
+        ));
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let op = match command {
+            "+" => ">",
+            "-" => "<",
+            "changed" => "!=",
+            "unchanged" => "=",
+            other => other,
+        };
+        let sess = ensure_session(sessions, pid)?;
+        let output = scanmem_send(proc_of(sess)?, op)?;
+        touch_session_on(sess, command, &output);
+        Ok(tool_ok(
+            message,
+            json!({ "pid": pid, "initial_value": initial_value, "refine": command, "output": output }),
+            Some("Use scanmem_list_matches or refine again."),
+        ))
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    {
+        linux_only("scanmem backend")?;
+        Err("unsupported platform".to_string())
+    }
 }
 
 fn scanmem_pick_match(args: &Value) -> Result<Value, String> {
@@ -3046,11 +3531,7 @@ fn scanmem_pick_match(args: &Value) -> Result<Value, String> {
 }
 
 fn session_create(args: &Value, sessions: &mut Sessions) -> Result<Value, String> {
-    linux_only("scanmem sessions")?;
-    let pid = valid_pid(args)?;
-    if !std::path::Path::new(&format!("/proc/{pid}")).exists() {
-        return Err("pid is not running".to_string());
-    }
+    let pid = valid_live_pid(args)?;
     let session = sessions.entry(pid).or_insert_with(|| new_session(pid));
     Ok(tool_ok(
         "Session created.",
@@ -3105,6 +3586,8 @@ fn new_session(pid: u64) -> Session {
         frozen_value: None,
         freeze_loop: None,
         proc: None,
+        #[cfg(target_os = "windows")]
+        windows_scan: None,
     }
 }
 
@@ -3140,10 +3623,22 @@ fn valid_pid(args: &Value) -> Result<u64, String> {
         .ok_or_else(|| "pid is required".to_string())
 }
 fn valid_live_pid(args: &Value) -> Result<u64, String> {
-    linux_only("pid liveness checks")?;
     let pid = valid_pid(args)?;
-    if !std::path::Path::new(&format!("/proc/{pid}")).exists() {
-        return Err("pid is not running".to_string());
+    #[cfg(target_os = "windows")]
+    {
+        if !windows::is_pid_alive(pid) {
+            return Err("pid is not running".to_string());
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        if !std::path::Path::new(&format!("/proc/{pid}")).exists() {
+            return Err("pid is not running".to_string());
+        }
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    {
+        linux_only("pid liveness checks")?;
     }
     Ok(pid)
 }
@@ -3345,16 +3840,32 @@ fn is_counted_prompt(s: &str) -> bool {
 }
 
 fn ensure_session<'a>(sessions: &'a mut Sessions, pid: u64) -> Result<&'a mut Session, String> {
-    linux_only("scanmem sessions")?;
-    if !std::path::Path::new(&format!("/proc/{pid}")).exists() {
-        return Err("pid is not running".to_string());
+    #[cfg(target_os = "windows")]
+    {
+        if !windows::is_pid_alive(pid) {
+            return Err("pid is not running".to_string());
+        }
+        let entry = sessions.entry(pid).or_insert_with(|| new_session(pid));
+        Ok(entry)
     }
-    let entry = sessions.entry(pid).or_insert_with(|| new_session(pid));
-    if entry.proc.is_none() {
-        let (proc, _banner) = spawn_scanmem(pid)?;
-        entry.proc = Some(proc);
+    #[cfg(target_os = "linux")]
+    {
+        linux_only("scanmem sessions")?;
+        if !std::path::Path::new(&format!("/proc/{pid}")).exists() {
+            return Err("pid is not running".to_string());
+        }
+        let entry = sessions.entry(pid).or_insert_with(|| new_session(pid));
+        if entry.proc.is_none() {
+            let (proc, _banner) = spawn_scanmem(pid)?;
+            entry.proc = Some(proc);
+        }
+        Ok(entry)
     }
-    Ok(entry)
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    {
+        linux_only("scanmem sessions")?;
+        Err("unsupported platform".to_string())
+    }
 }
 
 fn ok(id: Option<Value>, result: Value) -> Value {
@@ -3516,7 +4027,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     fn linux_tools_report_unsupported_off_linux() {
         let err = scanmem_version().unwrap_err();
         assert!(err.contains("Linux-only"));
