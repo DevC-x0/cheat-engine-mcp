@@ -223,6 +223,7 @@ fn tools() -> Value {
         { "name": "memory_read_int", "description": "Read bounded int32/int64 values from a live readable process mapping.", "inputSchema": { "type": "object", "properties": { "pid": { "type": "integer" }, "address": { "type": "string" }, "count": { "type": "integer" }, "value_type": { "type": "string" } }, "required": ["pid", "address"] } },
         { "name": "memory_read_float", "description": "Read bounded float/double values from a live readable process mapping.", "inputSchema": { "type": "object", "properties": { "pid": { "type": "integer" }, "address": { "type": "string" }, "count": { "type": "integer" }, "value_type": { "type": "string" } }, "required": ["pid", "address"] } },
         { "name": "memory_read_string", "description": "Read a bounded NUL-terminated string from a live readable process mapping.", "inputSchema": { "type": "object", "properties": { "pid": { "type": "integer" }, "address": { "type": "string" }, "max_bytes": { "type": "integer" } }, "required": ["pid", "address"] } },
+        { "name": "memory_write_bytes", "description": "Write bounded raw bytes (hex string, e.g. '90 90' or 'C3') to a live process memory address. Requires confirm_write=true.", "inputSchema": { "type": "object", "properties": { "pid": { "type": "integer" }, "address": { "type": "string" }, "bytes_hex": { "type": "string" }, "confirm_write": { "type": "boolean" }, "dry_run": { "type": "boolean" } }, "required": ["pid", "address", "bytes_hex"] } },
         { "name": "workspace_list", "description": "List game workspaces under reverse/ and their IL2CPP artifact status.", "inputSchema": { "type": "object", "properties": {} } },
         { "name": "workspace_status", "description": "Show IL2CPP artifact status for a workspace/game, active workspace, or root.", "inputSchema": { "type": "object", "properties": { "workspace": { "type": "string" }, "game": { "type": "string" }, "root": { "type": "string" } } } },
         { "name": "workspace_set_active", "description": "Set and persist the active game workspace for IL2CPP tools.", "inputSchema": { "type": "object", "properties": { "workspace": { "type": "string" }, "game": { "type": "string" } } } },
@@ -337,6 +338,7 @@ fn call_tool(id: Option<Value>, params: Value, state: &mut AppState) -> Value {
         "memory_read_int" => memory_read_int(&args),
         "memory_read_float" => memory_read_float(&args),
         "memory_read_string" => memory_read_string(&args),
+        "memory_write_bytes" => memory_write_bytes(&args),
         "workspace_list" => workspace_list(state.active_workspace.as_deref()),
         "workspace_status" => workspace_status(&args, state.active_workspace.as_deref()),
         "workspace_set_active" => workspace_set_active(&args, state),
@@ -1421,6 +1423,85 @@ fn memory_read_string(args: &Value) -> Result<Value, String> {
         json!({ "pid": pid, "address": hex(address), "max_bytes": max_bytes, "length": string.len(), "truncated": end == bytes.len(), "string": string, "hex": bytes_hex(&bytes[..end]), "mapping": mapping }),
         None,
     ))
+}
+
+fn memory_write_bytes(args: &Value) -> Result<Value, String> {
+    let pid = valid_live_pid(args)?;
+    let address = parse_u64(required_str(args, "address")?)?;
+    let hex_str = required_str(args, "bytes_hex")?;
+    let cleaned_hex = hex_str.replace(|c: char| c.is_whitespace() || c == '-' || c == '_', "");
+    if cleaned_hex.is_empty() || cleaned_hex.len() % 2 != 0 {
+        return Err("bytes_hex must contain an even number of hex characters (e.g. '90 90' or 'C3')".to_string());
+    }
+    let mut bytes = Vec::with_capacity(cleaned_hex.len() / 2);
+    for i in (0..cleaned_hex.len()).step_by(2) {
+        let byte = u8::from_str_radix(&cleaned_hex[i..i + 2], 16)
+            .map_err(|_| format!("invalid hex byte: {}", &cleaned_hex[i..i + 2]))?;
+        bytes.push(byte);
+    }
+    if bytes.is_empty() || bytes.len() > 1024 {
+        return Err("write length must be 1..1024 bytes".to_string());
+    }
+    let confirm = args.get("confirm_write").and_then(Value::as_bool) == Some(true);
+    let dry_run = args.get("dry_run").and_then(Value::as_bool) == Some(true);
+    if dry_run {
+        return Ok(tool_ok(
+            "Dry run only; no memory modified.",
+            json!({
+                "pid": pid,
+                "address": hex(address),
+                "bytes_len": bytes.len(),
+                "bytes_hex": bytes_hex(&bytes),
+                "dry_run": true
+            }),
+            Some("Set confirm_write=true and dry_run=false to write."),
+        ));
+    }
+    if !confirm {
+        return Err("confirm_write must be true to write process memory".to_string());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let written = windows::write_process_memory(pid, address, &bytes)?;
+        Ok(tool_ok(
+            "Memory bytes written.",
+            json!({
+                "pid": pid,
+                "address": hex(address),
+                "bytes_written": written,
+                "bytes_hex": bytes_hex(&bytes)
+            }),
+            Some("Verify memory at target address changed."),
+        ))
+    }
+    #[cfg(target_os = "linux")]
+    {
+        use std::fs::OpenOptions;
+        let mut file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(format!("/proc/{pid}/mem"))
+            .map_err(|e| format!("failed to open /proc/{pid}/mem for write: {e}"))?;
+        file.seek(SeekFrom::Start(address))
+            .map_err(|e| format!("memory seek failed: {e}"))?;
+        file.write_all(&bytes)
+            .map_err(|e| format!("memory write failed: {e}"))?;
+        Ok(tool_ok(
+            "Memory bytes written.",
+            json!({
+                "pid": pid,
+                "address": hex(address),
+                "bytes_written": bytes.len(),
+                "bytes_hex": bytes_hex(&bytes)
+            }),
+            Some("Verify memory at target address changed."),
+        ))
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    {
+        Err("memory writing is unsupported on this platform".to_string())
+    }
 }
 
 fn memory_read_count(args: &Value, default: usize) -> usize {
@@ -4451,5 +4532,25 @@ mod tests {
             .unwrap()
             .contains("Health setter"));
         fs::remove_dir_all(format!("reverse/{workspace}")).ok();
+    }
+
+    #[test]
+    fn memory_write_bytes_requires_confirmation_and_supports_dry_run() {
+        let err = memory_write_bytes(&json!({
+            "pid": std::process::id(),
+            "address": "0x1000",
+            "bytes_hex": "90 90"
+        })).unwrap_err();
+        assert!(err.contains("confirm_write must be true"));
+
+        let dry = memory_write_bytes(&json!({
+            "pid": std::process::id(),
+            "address": "0x1000",
+            "bytes_hex": "90 90",
+            "dry_run": true
+        })).unwrap();
+        assert_eq!(dry["ok"], true);
+        assert_eq!(dry["data"]["dry_run"], true);
+        assert_eq!(dry["data"]["bytes_len"], 2);
     }
 }

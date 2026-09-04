@@ -14,7 +14,7 @@
 5. Batasi jumlah write dengan `max_writes`; jangan write kalau match terlalu banyak.
 6. Simpan hasil reverse lokal di `reverse/<game>/tools/`; folder `reverse/` di-ignore dan tidak untuk dipush.
 7. GDB hook/probe wajib pakai `confirm_hook:true` / `confirm_probe:true` hanya setelah script dicek.
-8. Windows v0.3.0 hanya mendukung MCP portable tools: `ping`, table/report, workspace, IL2CPP artifact search. Tool `scanmem`, memory process, `/proc`, dan GDB masih Linux-only.
+8. Windows didukung penuh secara native via Win32 API (`kernel32.dll`) untuk memory scanning, process listing, memory reading, dan memory writing. Tool GDB dynamic hook tetap Linux-only.
 
 ## Instalasi dari release
 

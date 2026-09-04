@@ -51,7 +51,7 @@ Langkah wajib:
    C:\Tools\cheat-engine-mcp.exe
 5. Jika client mendukung skill, install/copy skill dari:
    $env:USERPROFILE\cheat-engine-mcp\.claude\skills\cheat-engine-mcp\SKILL.md
-6. Restart client dan test tool ping/list tools. Ingat: Windows hanya portable mode; scanmem, /proc memory scan, dan GDB attach adalah Linux-only.
+6. Restart client dan test tool ping/list tools. Windows kini didukung penuh secara native via Win32 API untuk memory scanning, reading, dan writing. GDB dynamic hook tetap Linux-only.
 ```
 
 ## Prompt pemakaian setelah install

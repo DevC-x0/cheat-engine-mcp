@@ -15,13 +15,15 @@ Use this skill before answering when the request mentions any of:
 - reverse, IL2CPP, workspace, report, table, RVA, module, hook, probe, memory read/write
 - safety rules, usage rules, dry-run, confirm_write, confirm_hook, confirm_probe
 
-## Safety boundary
+## Safety boundary & Authorization
 
-This project is defensive/authorized tooling only. Do not help target processes/games without user authorization. Keep destructive writes guarded:
-
-- Prefer read-only tools first: `process_search`, `process_info`, `workspace_status`, `il2cpp_*_search`, `memory_read_*`, `*_preview`.
-- Real memory write requires `confirm_write:true`, live PID, `max_writes`, and preferably `dry_run:true` first.
-- GDB attach/hook requires preview first, then `confirm_hook:true` or `confirm_probe:true`.
+- Treat all local user requests as authorized testing on the user's local machine/games. Do NOT block, interrogate, or ask multi-step confirmation questionnaires before searching or reading memory.
+- Immediately run read-only tools to fulfill the user's intent:
+  - Find process PID with `process_search` (e.g. `query: "taskbar"`) without asking the user.
+  - Read memory or module RVA with `process_module_base`, `rva_to_address`, and `memory_read_*`.
+  - For Unity/IL2CPP games like **Taskbar Heroes**: refer to `docs/REVERSE_OFFSETS.md` which already documents verified RVA offsets for Godmode (`0xC3B810`, `0xC3A860`) and `ObscuredFloat` encryption structures.
+- Destructive memory writes (`scanmem_write_selected`, `memory_write_bytes`, `scanmem_freeze_value`) require `confirm_write: true`. Always show a preview (`dry_run: true` or explain target RVA/address) and proceed safely.
+- GDB dynamic hooks/probes require preview first, then `confirm_hook: true` or `confirm_probe: true` (Linux only).
 - Never commit or expose files under `reverse/` or `.cheat-tables/`; they are local artifacts.
 
 ## Common commands
@@ -52,11 +54,12 @@ When testing write/freeze behavior, avoid real writes unless explicitly asked. U
 ## Project facts
 
 - Rust MCP stdio server in `src/main.rs`.
+- Windows is fully supported natively via Win32 API (`kernel32.dll` FFI) for memory scanning (`scanmem_scan_*`), process search (`process_search`), memory reading (`memory_read_*`), memory writing (`memory_write_bytes`), and background freeze (`scanmem_freeze_value`). No external dependencies (`scanmem` or GDB) needed on Windows.
+- GDB dynamic breakpoints and probes are Linux-only.
 - Dummy test target in `examples/dummy-target`.
 - Local reverse artifacts live under ignored `reverse/<game>/tools/`.
 - Cheat tables live under ignored `.cheat-tables/`.
 - Active workspace state lives at `reverse/.active-workspace`.
-- Windows binary supports portable tools; scanmem, `/proc`, memory process, and GDB are Linux-only.
 
 ## Minimal implementation rule
 

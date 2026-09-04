@@ -27,7 +27,7 @@ Copy-Item .\target\release\cheat-engine-mcp.exe C:\Tools\cheat-engine-mcp.exe
 C:\Tools\cheat-engine-mcp.exe --help
 ```
 
-Windows mode mendukung tool portable seperti `ping`, cheat table, workspace, IL2CPP artifact search, dan report. Tool `/proc`, `scanmem`, dan GDB attach adalah Linux-only.
+Windows didukung penuh secara native untuk memory scanning, process listing, memory reading, dan memory writing via Win32 API (`kernel32.dll`). Tidak perlu scanmem atau GDB. Tool GDB dynamic hook tetap Linux-only.
 
 ## 2. Tambahkan config MCP
 
