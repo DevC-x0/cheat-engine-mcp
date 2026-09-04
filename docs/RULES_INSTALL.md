@@ -58,12 +58,12 @@ Extract ke contoh path:
 C:\Tools\cheat-engine-mcp.exe
 ```
 
-Catatan: Windows binary bisa dipakai untuk MCP portable tools, bukan memory scanning.
+Catatan: Windows binary didukung penuh secara native untuk memory scanning, memory read/write, process search, dan IL2CPP reverse engineering.
 
 ## Build dari source
 
 ```bash
-git clone https://github.com/gede-cahya/cheat-engine-mcp.git
+git clone https://github.com/DevC-x0/cheat-engine-mcp.git
 cd cheat-engine-mcp
 cargo build --release
 ```

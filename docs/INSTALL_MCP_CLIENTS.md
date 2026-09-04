@@ -10,7 +10,7 @@
 sudo apt update && sudo apt install -y git cargo scanmem gdb
 # Arch: sudo pacman -S git rust scanmem gdb
 
-git clone https://github.com/gede-cahya/cheat-engine-mcp.git
+git clone https://github.com/DevC-x0/cheat-engine-mcp.git
 cd cheat-engine-mcp
 ./install.sh
 ~/.local/bin/cheat-engine-mcp --help
@@ -19,7 +19,7 @@ cd cheat-engine-mcp
 ### Windows
 
 ```powershell
-git clone https://github.com/gede-cahya/cheat-engine-mcp.git
+git clone https://github.com/DevC-x0/cheat-engine-mcp.git
 cd cheat-engine-mcp
 cargo build --release
 New-Item -ItemType Directory -Force C:\Tools | Out-Null

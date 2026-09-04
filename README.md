@@ -17,15 +17,16 @@
 | Category | Tools | Description | Supported OS |
 |---|---|---|---|
 | 🔍 **Memory Scanning** | `scanmem_scan_*`, `session_*` | Exact, range, type-based, increased/decreased/changed value scanning | **Linux & Windows** |
-| ✏️ **Memory Writing** | `scanmem_write_*`, `scanmem_freeze_*` | Safe guarded writes with preview, dry-run, confirmation, and persistent freeze | **Linux & Windows** |
+| ✏️ **Memory Writing** | `scanmem_write_*`, `memory_write_bytes`, `scanmem_freeze_*` | Safe guarded writes with preview, dry-run, confirmation, hex patching, and persistent freeze | **Linux & Windows** |
 | 📖 **Memory Reading** | `memory_read_*` | Read bytes, ints, floats, and strings from process memory | **Linux & Windows** |
 | 🧬 **IL2CPP Reverse** | `il2cpp_*` | Search classes, methods, fields, strings, and RVA in Unity IL2CPP dumps | **Linux & Windows** |
+| 🔄 **IL2CPP Automation** | `il2cpp_run_dumper`, `il2cpp_scan_taskbarhero_offsets` | Automated dumper execution & deterministic heuristic offset recovery across game updates | **Linux & Windows** |
 | 📊 **Cheat Tables** | `table_*` | Save/load/resolve/validate cheat entries with module+RVA tracking | **Linux & Windows** |
 | 📋 **Reports** | `reverse_report_*` | Create and manage local reverse engineering reports per game | **Linux & Windows** |
 | 🎯 **Process Utils** | `process_*`, `rva_*` | Process search, module listing, RVA/address conversion, memory maps | **Linux & Windows** |
 | 🔬 **GDB Hooks** | `gdb_hook_*`, `gdb_probe_*` | Dynamic function hooking, breakpoint probes, disassembly preview | Linux only |
 
-**72 MCP tools** in total — all accessible via natural language through any MCP-compatible AI assistant.
+**75 MCP tools** in total — all accessible via natural language through any MCP-compatible AI assistant.
 
 ---
 
@@ -200,7 +201,25 @@ The AI will:
 4. `il2cpp_field_search` → find class fields and offsets
 5. `il2cpp_find_by_rva` → map RVA addresses
 
+### Automate IL2CPP Dump & Offset Recovery After Game Update
+
+```
+"Game Taskbar Heroes habis update, tolong dump dan scan offset terbarunya untuk godmode dan damage"
+```
+
+The AI will:
+1. `process_search` → find `TaskbarHero.exe` live PID
+2. `il2cpp_run_dumper` → automatically run Il2CppDumper from PID
+3. `il2cpp_scan_taskbarhero_offsets` → heuristically match anchors on `dump.cs`:
+   - Base health & Damage RVA (`pj.gsi`)
+   - Hero Receiver Godmode RVA (`pf.gsi`)
+   - Stat multiplier RVA (`zo.haz`)
+   - AoE radius & hitbox RVA (`bec.nax`)
+4. Compute Runtime Addresses (`Base + RVA`) and output Markdown comparison table
+5. `memory_write_bytes` → apply godmode byte patches with confirmation
+
 ### Hook a game function with GDB
+
 
 ```
 "Hook the damage function at RVA 0x958ADC in GameAssembly.dll and multiply damage by 1000"
@@ -255,6 +274,7 @@ The AI will:
 |---|---|
 | `scanmem_preview_write` | Preview write operation (safe) |
 | `scanmem_write_selected` | Write to matched addresses |
+| `memory_write_bytes` | Write bounded raw hex bytes (e.g. `90 90`, `C3`) directly to process memory / RVA |
 | `scanmem_freeze_value` | Freeze value (one-shot or persistent) |
 | `scanmem_unfreeze_value` | Stop freezing |
 
@@ -275,10 +295,12 @@ The AI will:
 | `gdb_disassemble_address` | Disassemble at absolute address |
 | `gdb_breakpoint_probe_preview` | Preview breakpoint probe |
 
-### IL2CPP Reverse Engineering
+### IL2CPP Reverse Engineering & Automation
 
 | Tool | Description |
 |---|---|
+| `il2cpp_run_dumper` | Automatically run Il2CppDumper from live PID or GameAssembly.dll path |
+| `il2cpp_scan_taskbarhero_offsets` | Heuristic anchor scan on dump.cs to discover Godmode, Instakill, and AoE RVAs |
 | `il2cpp_artifacts_status` | Check dump.cs availability |
 | `il2cpp_class_search` | Search classes by name |
 | `il2cpp_method_search` | Search methods by name |
@@ -334,7 +356,7 @@ This tool is built with **defense-in-depth safety**:
 ### Linux
 
 ```bash
-git clone https://github.com/gede-cahya/cheat-engine-mcp.git
+git clone https://github.com/DevC-x0/cheat-engine-mcp.git
 cd cheat-engine-mcp
 cargo build --release
 # Binary: ./target/release/cheat-engine-mcp
@@ -343,7 +365,7 @@ cargo build --release
 ### Windows
 
 ```powershell
-git clone https://github.com/gede-cahya/cheat-engine-mcp.git
+git clone https://github.com/DevC-x0/cheat-engine-mcp.git
 cd cheat-engine-mcp
 cargo build --release
 # Binary: .\target\release\cheat-engine-mcp.exe
@@ -427,7 +449,11 @@ sudo sysctl kernel.yama.ptrace_scope=1
 
 ```
 cheat-engine-mcp/
-├── src/main.rs              # MCP server (single-file, 72 tools)
+├── src/
+│   ├── main.rs              # MCP server (75 tools, JSON-RPC router)
+│   ├── native_scan.rs       # Pure cross-platform memory buffer scanner
+│   ├── windows.rs           # Win32 API native process memory backend
+│   └── il2cpp_heuristic.rs  # Heuristic anchor offset recovery engine
 ├── Cargo.toml               # Rust project config
 ├── install.sh               # Linux install script
 ├── install-antigravity.sh   # Antigravity one-click installer
@@ -448,6 +474,7 @@ cheat-engine-mcp/
 │   ├── SETUP_CLAUDE_DESKTOP.md
 │   ├── SETUP_CURSOR.md
 │   ├── SETUP_GENERIC.md
+│   ├── REVERSE_OFFSETS.md
 │   ├── RULES_INSTALL.md
 │   ├── RELEASE.md
 │   └── *.example.json
@@ -466,7 +493,7 @@ cheat-engine-mcp/
 
 ## 📜 License
 
-[MIT License](LICENSE) © gede-cahya
+[MIT License](LICENSE) © DevC-x0
 
 ---
 

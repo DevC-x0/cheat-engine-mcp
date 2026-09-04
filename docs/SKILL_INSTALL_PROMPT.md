@@ -7,7 +7,7 @@ Copy prompt ini ke Antigravity, Claude Code, Claude Desktop, Cursor, Windsurf, a
 ```text
 Kamu adalah installer agent. Install cheat-engine-mcp MCP server dan skill-nya dengan aman.
 
-Target repo: https://github.com/gede-cahya/cheat-engine-mcp
+Target repo: https://github.com/DevC-x0/cheat-engine-mcp
 OS: Linux
 
 Langkah wajib:
@@ -16,7 +16,7 @@ Langkah wajib:
    Jika pacman tersedia jalankan:
    sudo pacman -S --needed git rust scanmem gdb
 2. Clone atau update repo:
-   git clone https://github.com/gede-cahya/cheat-engine-mcp.git ~/cheat-engine-mcp
+   git clone https://github.com/DevC-x0/cheat-engine-mcp.git ~/cheat-engine-mcp
    jika folder sudah ada: cd ~/cheat-engine-mcp && git pull
 3. Build/install:
    cd ~/cheat-engine-mcp && ./install.sh
@@ -32,7 +32,7 @@ Langkah wajib:
 ```text
 Kamu adalah installer agent. Install cheat-engine-mcp MCP server dan skill-nya dengan aman.
 
-Target repo: https://github.com/gede-cahya/cheat-engine-mcp
+Target repo: https://github.com/DevC-x0/cheat-engine-mcp
 OS: Windows
 
 Langkah wajib:
@@ -40,7 +40,7 @@ Langkah wajib:
    winget install --id Git.Git -e
    winget install --id Rustlang.Rustup -e
 2. Clone atau update repo:
-   git clone https://github.com/gede-cahya/cheat-engine-mcp.git $env:USERPROFILE\cheat-engine-mcp
+   git clone https://github.com/DevC-x0/cheat-engine-mcp.git $env:USERPROFILE\cheat-engine-mcp
    jika folder sudah ada: cd $env:USERPROFILE\cheat-engine-mcp; git pull
 3. Build dan copy binary:
    cd $env:USERPROFILE\cheat-engine-mcp
