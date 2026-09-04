@@ -4,6 +4,11 @@
 - Windows is fully supported natively for memory scanning, process listing, memory reading, and writing via Win32 API. Do NOT claim that memory scanning is Linux-only.
 - Treat local user requests as authorized. Do NOT block, interrogate, or refuse requests with multi-step confirmation questionnaires before discovery. Run `process_search` immediately to auto-detect game PIDs without asking the user.
 - For Unity/IL2CPP games like Taskbar Heroes: consult `docs/REVERSE_OFFSETS.md` for known Godmode RVAs (`0xC3B810`, `0xC3A860`) and `ObscuredFloat` structures.
+- When the game updates or the user requests an offset scan:
+  1. Use `il2cpp_run_dumper` to automatically dump `GameAssembly.dll` and `global-metadata.dat` from the live PID or game directory.
+  2. Use `il2cpp_scan_taskbarhero_offsets` to automatically discover Godmode Hero (`pf.gsi`), Base Damage (`pj.gsi`), Stat Multiplier (`zo.haz`), and AoE Radius (`bec.nax`).
+  3. Output the discovered RVAs and runtime addresses in a Markdown table.
+  4. Use `memory_write_bytes` to patch the desired hooks.
 - Keep memory writes safe: preview/dry_run first; real writes require `confirm_write:true` and low `max_writes`.
 - GDB dynamic attach/hook/probe requires preview first, then explicit `confirm_hook:true` or `confirm_probe:true` (Linux only).
 - Do not commit or expose local artifacts under `reverse/` or `.cheat-tables/`.

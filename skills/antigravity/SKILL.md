@@ -37,13 +37,15 @@ This tool is authorized for local/defensive/educational testing only. Always res
 7. Write or freeze the value with `scanmem_write_selected` or `scanmem_freeze_value` specifying `confirm_write: true`.
 8. For direct byte/instruction patching (e.g. Godmode RVA detour): calculate target address via `rva_to_address`, preview with `dry_run: true`, and write with `memory_write_bytes(confirm_write: true)`.
 
-### 2. Unity IL2CPP Reverse Engineering
-1. Check IL2CPP dump status with `il2cpp_artifacts_status`.
-2. Activate a game workspace with `workspace_set_active` to persist active context.
-3. Search for classes of interest using `il2cpp_class_search`.
-4. Search for target methods with `il2cpp_method_search` or look up offset/fields with `il2cpp_field_search`.
-5. Retrieve complete class details using `il2cpp_method_detail`.
-6. Find functions from assembly code using `il2cpp_find_by_rva`.
+### 2. Unity IL2CPP Reverse Engineering & Update Recovery
+1. When game updates: run `il2cpp_run_dumper` (with `pid` or file paths) to automatically extract `dump.cs` and metadata.
+2. Run `il2cpp_scan_taskbarhero_offsets` to automatically discover Godmode Hero (`pf.gsi`), Base Damage (`pj.gsi`), Stat Multiplier (`zo.haz`), and AoE Radius (`bec.nax`).
+3. Check IL2CPP dump status with `il2cpp_artifacts_status`.
+4. Activate a game workspace with `workspace_set_active` to persist active context.
+5. Search for classes of interest using `il2cpp_class_search`.
+6. Search for target methods with `il2cpp_method_search` or look up offset/fields with `il2cpp_field_search`.
+7. Retrieve complete class details using `il2cpp_method_detail`.
+8. Find functions from assembly code using `il2cpp_find_by_rva`.
 
 ### 3. GDB Function Hooking (Linux Only)
 1. Identify target RVA and module base (e.g., `GameAssembly.dll`).

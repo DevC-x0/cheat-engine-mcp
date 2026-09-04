@@ -100,16 +100,46 @@ impl ParsedValue {
     pub fn parse(s: &str, scan_type: ScanType) -> Result<Self, String> {
         let s = s.trim();
         match scan_type {
-            ScanType::Int8 => s.parse::<i8>().map(ParsedValue::I8).map_err(|e| e.to_string()),
-            ScanType::UInt8 => s.parse::<u8>().map(ParsedValue::U8).map_err(|e| e.to_string()),
-            ScanType::Int16 => s.parse::<i16>().map(ParsedValue::I16).map_err(|e| e.to_string()),
-            ScanType::UInt16 => s.parse::<u16>().map(ParsedValue::U16).map_err(|e| e.to_string()),
-            ScanType::Int32 => s.parse::<i32>().map(ParsedValue::I32).map_err(|e| e.to_string()),
-            ScanType::UInt32 => s.parse::<u32>().map(ParsedValue::U32).map_err(|e| e.to_string()),
-            ScanType::Int64 => s.parse::<i64>().map(ParsedValue::I64).map_err(|e| e.to_string()),
-            ScanType::UInt64 => s.parse::<u64>().map(ParsedValue::U64).map_err(|e| e.to_string()),
-            ScanType::Float32 => s.parse::<f32>().map(ParsedValue::F32).map_err(|e| e.to_string()),
-            ScanType::Float64 => s.parse::<f64>().map(ParsedValue::F64).map_err(|e| e.to_string()),
+            ScanType::Int8 => s
+                .parse::<i8>()
+                .map(ParsedValue::I8)
+                .map_err(|e| e.to_string()),
+            ScanType::UInt8 => s
+                .parse::<u8>()
+                .map(ParsedValue::U8)
+                .map_err(|e| e.to_string()),
+            ScanType::Int16 => s
+                .parse::<i16>()
+                .map(ParsedValue::I16)
+                .map_err(|e| e.to_string()),
+            ScanType::UInt16 => s
+                .parse::<u16>()
+                .map(ParsedValue::U16)
+                .map_err(|e| e.to_string()),
+            ScanType::Int32 => s
+                .parse::<i32>()
+                .map(ParsedValue::I32)
+                .map_err(|e| e.to_string()),
+            ScanType::UInt32 => s
+                .parse::<u32>()
+                .map(ParsedValue::U32)
+                .map_err(|e| e.to_string()),
+            ScanType::Int64 => s
+                .parse::<i64>()
+                .map(ParsedValue::I64)
+                .map_err(|e| e.to_string()),
+            ScanType::UInt64 => s
+                .parse::<u64>()
+                .map(ParsedValue::U64)
+                .map_err(|e| e.to_string()),
+            ScanType::Float32 => s
+                .parse::<f32>()
+                .map(ParsedValue::F32)
+                .map_err(|e| e.to_string()),
+            ScanType::Float64 => s
+                .parse::<f64>()
+                .map(ParsedValue::F64)
+                .map_err(|e| e.to_string()),
         }
     }
 
@@ -280,7 +310,11 @@ pub fn scan_buffer_exact(
     if buffer.len() < size {
         return;
     }
-    let step = if step == 0 { scan_type.alignment() } else { step };
+    let step = if step == 0 {
+        scan_type.alignment()
+    } else {
+        step
+    };
     let max_offset = buffer.len() - size;
     let mut offset = 0;
     while offset <= max_offset {
@@ -312,7 +346,11 @@ pub fn scan_buffer_range(
     if buffer.len() < size {
         return;
     }
-    let step = if step == 0 { scan_type.alignment() } else { step };
+    let step = if step == 0 {
+        scan_type.alignment()
+    } else {
+        step
+    };
     let max_offset = buffer.len() - size;
     let mut offset = 0;
     while offset <= max_offset {
@@ -342,7 +380,11 @@ pub fn scan_buffer_any(
     if buffer.len() < size {
         return;
     }
-    let step = if step == 0 { scan_type.alignment() } else { step };
+    let step = if step == 0 {
+        scan_type.alignment()
+    } else {
+        step
+    };
     let max_offset = buffer.len() - size;
     let mut offset = 0;
     while offset <= max_offset {
@@ -359,7 +401,11 @@ pub fn scan_buffer_any(
     }
 }
 
-pub fn format_scan_output(matches: &[ScanMatch], total_count: usize, scan_type: ScanType) -> String {
+pub fn format_scan_output(
+    matches: &[ScanMatch],
+    total_count: usize,
+    scan_type: ScanType,
+) -> String {
     let mut out = String::new();
     out.push_str(&format!("{} matches found.\n", total_count));
     let preview_count = matches.len().min(10);
@@ -373,7 +419,10 @@ pub fn format_scan_output(matches: &[ScanMatch], total_count: usize, scan_type: 
         ));
     }
     if total_count > preview_count {
-        out.push_str(&format!("... and {} more matches\n", total_count - preview_count));
+        out.push_str(&format!(
+            "... and {} more matches\n",
+            total_count - preview_count
+        ));
     }
     out
 }
@@ -431,7 +480,15 @@ mod tests {
         let low = ParsedValue::I32(40);
         let high = ParsedValue::I32(200);
         let mut matches = Vec::new();
-        scan_buffer_range(0x2000, &buffer, ScanType::Int32, &low, &high, 4, &mut matches);
+        scan_buffer_range(
+            0x2000,
+            &buffer,
+            ScanType::Int32,
+            &low,
+            &high,
+            4,
+            &mut matches,
+        );
 
         assert_eq!(matches.len(), 2);
         assert_eq!(matches[0].address, 0x2004);
@@ -453,8 +510,14 @@ mod tests {
     #[test]
     fn test_format_scan_output() {
         let matches = vec![
-            ScanMatch { address: 0x1000, value: ParsedValue::I32(100) },
-            ScanMatch { address: 0x1004, value: ParsedValue::I32(200) },
+            ScanMatch {
+                address: 0x1000,
+                value: ParsedValue::I32(100),
+            },
+            ScanMatch {
+                address: 0x1004,
+                value: ParsedValue::I32(200),
+            },
         ];
         let out = format_scan_output(&matches, 2, ScanType::Int32);
         assert!(out.contains("2 matches found."));

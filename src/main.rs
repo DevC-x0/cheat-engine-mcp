@@ -1,6 +1,10 @@
 #![recursion_limit = "256"]
-#![cfg_attr(target_os = "windows", allow(dead_code, unused_variables, unused_imports))]
+#![cfg_attr(
+    target_os = "windows",
+    allow(dead_code, unused_variables, unused_imports)
+)]
 
+pub mod il2cpp_heuristic;
 pub mod native_scan;
 #[cfg(target_os = "windows")]
 pub mod windows;
@@ -240,6 +244,8 @@ fn tools() -> Value {
         { "name": "il2cpp_method_detail", "description": "Find method metadata by RVA or signature query.", "inputSchema": { "type": "object", "properties": { "rva": { "type": "string" }, "query": { "type": "string" }, "workspace": { "type": "string" }, "game": { "type": "string" }, "root": { "type": "string" }, "limit": { "type": "integer" }, "case_sensitive": { "type": "boolean" } } } },
         { "name": "il2cpp_find_by_rva", "description": "Find one dump.cs method by exact RVA.", "inputSchema": { "type": "object", "properties": { "rva": { "type": "string" }, "workspace": { "type": "string" }, "game": { "type": "string" }, "root": { "type": "string" } }, "required": ["rva"] } },
         { "name": "il2cpp_related_methods", "description": "List methods related to a class and optional namespace.", "inputSchema": { "type": "object", "properties": { "class": { "type": "string" }, "namespace": { "type": "string" }, "workspace": { "type": "string" }, "game": { "type": "string" }, "root": { "type": "string" }, "limit": { "type": "integer" }, "case_sensitive": { "type": "boolean" } }, "required": ["class"] } },
+        { "name": "il2cpp_run_dumper", "description": "Run Il2CppDumper to extract dump.cs and metadata from GameAssembly.dll and global-metadata.dat, or from a live PID.", "inputSchema": { "type": "object", "properties": { "pid": { "type": "integer" }, "game_assembly": { "type": "string" }, "metadata": { "type": "string" }, "output_dir": { "type": "string" }, "dumper_path": { "type": "string" }, "workspace": { "type": "string" } } } },
+        { "name": "il2cpp_scan_taskbarhero_offsets", "description": "Scan dump.cs using heuristic anchors to discover TaskbarHero RVAs (Godmode Hero, Base Damage, Stat Multiplier, AoE Radius).", "inputSchema": { "type": "object", "properties": { "workspace": { "type": "string" }, "game": { "type": "string" }, "root": { "type": "string" }, "dump_path": { "type": "string" }, "pid": { "type": "integer" } } } },
         { "name": "table_create", "description": "Create a cheat table JSON profile in .cheat-tables.", "inputSchema": { "type": "object", "properties": { "game": { "type": "string" }, "process": { "type": "string" }, "notes": { "type": "string" } }, "required": ["game", "process"] } },
         { "name": "table_add_entry", "description": "Add a named entry to a cheat table.", "inputSchema": { "type": "object", "properties": { "table": { "type": "string" }, "name": { "type": "string" }, "scan": { "type": "string" }, "value_type": { "type": "string" }, "last_value": { "type": "string" }, "notes": { "type": "string" }, "module": { "type": "string" }, "rva": { "type": "string" }, "method_signature": { "type": "string" }, "scan_query": { "type": "string" } }, "required": ["table", "name", "scan", "value_type"] } },
         { "name": "table_resolve_entries", "description": "Resolve table module+RVA entries to runtime addresses for a live PID.", "inputSchema": { "type": "object", "properties": { "table": { "type": "string" }, "pid": { "type": "integer" } }, "required": ["table", "pid"] } },
@@ -361,6 +367,10 @@ fn call_tool(id: Option<Value>, params: Value, state: &mut AppState) -> Value {
         "il2cpp_related_methods" => {
             il2cpp_related_methods(&args, state.active_workspace.as_deref())
         }
+        "il2cpp_run_dumper" => il2cpp_run_dumper(&args, state.active_workspace.as_deref()),
+        "il2cpp_scan_taskbarhero_offsets" => {
+            il2cpp_scan_taskbarhero_offsets(&args, state.active_workspace.as_deref())
+        }
         "table_create" => table_create(&args),
         "table_add_entry" => table_add_entry(&args),
         "table_resolve_entries" => table_resolve_entries(&args),
@@ -448,7 +458,10 @@ fn output_warning(data: &Value) -> Vec<String> {
 fn scanmem_version() -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
-        Ok("cheat-engine-mcp native windows engine v0.4.0 (Win32 VirtualQueryEx/RPM/WPM)".to_string())
+        Ok(
+            "cheat-engine-mcp native windows engine v0.4.0 (Win32 VirtualQueryEx/RPM/WPM)"
+                .to_string(),
+        )
     }
     #[cfg(target_os = "linux")]
     {
@@ -620,7 +633,11 @@ fn scanmem_preview_write(args: &Value, sessions: &mut Sessions) -> Result<Value,
     #[cfg(target_os = "windows")]
     {
         let sess = ensure_session(sessions, pid)?;
-        let match_count = sess.windows_scan.as_ref().map(|s| s.matches.len()).unwrap_or(0);
+        let match_count = sess
+            .windows_scan
+            .as_ref()
+            .map(|s| s.matches.len())
+            .unwrap_or(0);
         let output = format!("{match_count} matches found.");
         touch_session_on(sess, "preview_write", &output);
         return Ok(tool_ok(
@@ -796,7 +813,10 @@ fn scanmem_freeze_value(args: &Value, sessions: &mut Sessions) -> Result<Value, 
                 }
             }
         });
-        let loop_handle = FreezeLoop { stop, thread: Some(thread) };
+        let loop_handle = FreezeLoop {
+            stop,
+            thread: Some(thread),
+        };
         sess.frozen_value = Some(freeze_value.clone());
         sess.freeze_loop = Some(loop_handle);
         return Ok(tool_ok(
@@ -905,7 +925,8 @@ fn scanmem_scan_by_type(args: &Value, sessions: &mut Sessions) -> Result<Value, 
 
     #[cfg(target_os = "windows")]
     {
-        let scan_type = native_scan::ScanType::from_str(&value_type).unwrap_or(native_scan::ScanType::Int32);
+        let scan_type =
+            native_scan::ScanType::from_str(&value_type).unwrap_or(native_scan::ScanType::Int32);
         let target = native_scan::ParsedValue::parse(&value, scan_type)?;
         let matches = windows::scan_process_memory_exact(pid, scan_type, &target)?;
         let output = native_scan::format_scan_output(&matches, matches.len(), scan_type);
@@ -1431,7 +1452,10 @@ fn memory_write_bytes(args: &Value) -> Result<Value, String> {
     let hex_str = required_str(args, "bytes_hex")?;
     let cleaned_hex = hex_str.replace(|c: char| c.is_whitespace() || c == '-' || c == '_', "");
     if cleaned_hex.is_empty() || cleaned_hex.len() % 2 != 0 {
-        return Err("bytes_hex must contain an even number of hex characters (e.g. '90 90' or 'C3')".to_string());
+        return Err(
+            "bytes_hex must contain an even number of hex characters (e.g. '90 90' or 'C3')"
+                .to_string(),
+        );
     }
     let mut bytes = Vec::with_capacity(cleaned_hex.len() / 2);
     for i in (0..cleaned_hex.len()).step_by(2) {
@@ -1552,7 +1576,8 @@ fn read_process_memory(pid: u64, address: u64, len: usize) -> Result<(Vec<u8>, V
                 hex(m.end)
             ));
         }
-        let mut file = std::fs::File::open(format!("/proc/{pid}/mem")).map_err(|e| e.to_string())?;
+        let mut file =
+            std::fs::File::open(format!("/proc/{pid}/mem")).map_err(|e| e.to_string())?;
         let mut bytes = vec![0; len];
         file.seek(SeekFrom::Start(address))
             .map_err(|e| format!("memory seek failed: {e}"))?;
@@ -2478,6 +2503,287 @@ fn il2cpp_related_methods(args: &Value, active_workspace: Option<&str>) -> Resul
     ))
 }
 
+fn il2cpp_scan_taskbarhero_offsets(
+    args: &Value,
+    active_workspace: Option<&str>,
+) -> Result<Value, String> {
+    let dump_path = if let Some(path_str) = args.get("dump_path").and_then(Value::as_str) {
+        PathBuf::from(path_str)
+    } else {
+        let root = artifact_root(args, active_workspace)?;
+        artifact_file(&root, "dump.cs")?
+    };
+
+    if !dump_path.exists() {
+        return Err(format!("dump.cs not found at {}", dump_path.display()));
+    }
+
+    let file = fs::File::open(&dump_path)
+        .map_err(|e| format!("Failed to open dump.cs at {}: {}", dump_path.display(), e))?;
+    let reader = BufReader::new(file);
+    let offsets = il2cpp_heuristic::scan_taskbarhero_dump(reader)?;
+
+    let mut runtime_addresses = json!({});
+
+    if let Some(pid) = args.get("pid").and_then(Value::as_u64) {
+        if let Ok(module) = find_module(pid, "GameAssembly.dll") {
+            let base = module.base;
+            let compute = |finding: &Option<il2cpp_heuristic::MethodFinding>| -> Option<String> {
+                finding.as_ref().map(|f| hex(base + f.rva_int))
+            };
+            runtime_addresses = json!({
+                "module": "GameAssembly.dll",
+                "module_base": hex(base),
+                "godmode_hero_address": compute(&offsets.godmode_hero),
+                "godmode_base_address": compute(&offsets.godmode_base),
+                "stat_multiplier_address": compute(&offsets.stat_multiplier),
+                "aoe_radius_address": compute(&offsets.aoe_radius),
+            });
+        }
+    }
+
+    let summary_table = format!(
+        "| Hook / Feature | Class & Method | RVA Offset | Runtime Address (PID) |\n|---|---|---|---|\n| **Godmode (Hero Receiver)** | `{}` | `{}` | `{}` |\n| **Godmode / Instakill (Base)** | `{}` | `{}` | `{}` |\n| **Stat Multiplier (AoE/Range)** | `{}` | `{}` | `{}` |\n| **AoE Physical Radius / Hitbox** | `{}` | `{}` | `{}` |",
+        offsets.godmode_hero.as_ref().map(|m| format!("{}.{}", m.class_name, m.method_name)).unwrap_or_else(|| "-".into()),
+        offsets.godmode_hero.as_ref().map(|m| m.rva.as_str()).unwrap_or("-"),
+        runtime_addresses.get("godmode_hero_address").and_then(Value::as_str).unwrap_or("-"),
+        offsets.godmode_base.as_ref().map(|m| format!("{}.{}", m.class_name, m.method_name)).unwrap_or_else(|| "-".into()),
+        offsets.godmode_base.as_ref().map(|m| m.rva.as_str()).unwrap_or("-"),
+        runtime_addresses.get("godmode_base_address").and_then(Value::as_str).unwrap_or("-"),
+        offsets.stat_multiplier.as_ref().map(|m| format!("{}.{}", m.class_name, m.method_name)).unwrap_or_else(|| "-".into()),
+        offsets.stat_multiplier.as_ref().map(|m| m.rva.as_str()).unwrap_or("-"),
+        runtime_addresses.get("stat_multiplier_address").and_then(Value::as_str).unwrap_or("-"),
+        offsets.aoe_radius.as_ref().map(|m| format!("{}.{}", m.class_name, m.method_name)).unwrap_or_else(|| "-".into()),
+        offsets.aoe_radius.as_ref().map(|m| m.rva.as_str()).unwrap_or("-"),
+        runtime_addresses.get("aoe_radius_address").and_then(Value::as_str).unwrap_or("-"),
+    );
+
+    Ok(tool_ok(
+        "Successfully discovered TaskbarHero offsets using heuristic anchors.",
+        json!({
+            "dump_file": dump_path.to_string_lossy(),
+            "classes": {
+                "base_health": offsets.base_health_class,
+                "hero_health": offsets.hero_health_class,
+            },
+            "offsets": offsets,
+            "runtime_addresses": runtime_addresses,
+            "markdown_table": summary_table,
+        }),
+        Some("Use memory_write_bytes to patch godmode or damage hooks at runtime address or module_base + RVA.")
+    ))
+}
+
+fn il2cpp_run_dumper(args: &Value, active_workspace: Option<&str>) -> Result<Value, String> {
+    let mut game_assembly_path = args
+        .get("game_assembly")
+        .and_then(Value::as_str)
+        .map(PathBuf::from);
+    let mut metadata_path = args
+        .get("metadata")
+        .and_then(Value::as_str)
+        .map(PathBuf::from);
+
+    // If PID is provided, resolve GameAssembly.dll from live process maps
+    if let Some(pid) = args.get("pid").and_then(Value::as_u64) {
+        if game_assembly_path.is_none() {
+            if let Ok(module) = find_module(pid, "GameAssembly.dll") {
+                if !module.path.is_empty() {
+                    let p = PathBuf::from(&module.path);
+                    if p.exists() {
+                        game_assembly_path = Some(p);
+                    }
+                }
+            }
+        }
+    }
+
+    let ga = game_assembly_path.ok_or_else(|| {
+        "game_assembly path is required or pid with GameAssembly.dll loaded".to_string()
+    })?;
+
+    if !ga.exists() {
+        return Err(format!("GameAssembly.dll not found at {}", ga.display()));
+    }
+
+    // If metadata is missing, look for it in sibling directories
+    if metadata_path.is_none() {
+        if let Some(parent) = ga.parent() {
+            if let Ok(entries) = fs::read_dir(parent) {
+                for entry in entries.flatten() {
+                    let sub = entry.path();
+                    if sub.is_dir() {
+                        let cand = sub
+                            .join("il2cpp_data")
+                            .join("Metadata")
+                            .join("global-metadata.dat");
+                        if cand.exists() {
+                            metadata_path = Some(cand);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let meta = metadata_path.ok_or_else(|| {
+        "global-metadata.dat not found. Please provide explicit 'metadata' path".to_string()
+    })?;
+
+    if !meta.exists() {
+        return Err(format!(
+            "global-metadata.dat not found at {}",
+            meta.display()
+        ));
+    }
+
+    // Determine output directory
+    let output_dir = if let Some(out) = args.get("output_dir").and_then(Value::as_str) {
+        PathBuf::from(out)
+    } else if let Some(ws) = workspace_arg(args).or(active_workspace) {
+        PathBuf::from(ARTIFACT_ROOT).join(ws)
+    } else {
+        PathBuf::from(ARTIFACT_ROOT).join("TaskbarHero")
+    };
+
+    fs::create_dir_all(&output_dir).map_err(|e| {
+        format!(
+            "Failed to create output directory {}: {}",
+            output_dir.display(),
+            e
+        )
+    })?;
+
+    // Find Il2CppDumper binary/dll
+    let dumper_path = if let Some(dp) = args.get("dumper_path").and_then(Value::as_str) {
+        PathBuf::from(dp)
+    } else {
+        find_il2cpp_dumper()?
+    };
+
+    if !dumper_path.exists() {
+        return Err(format!(
+            "Il2CppDumper not found at {}",
+            dumper_path.display()
+        ));
+    }
+
+    let ga_str = ga.to_string_lossy().to_string();
+    let meta_str = meta.to_string_lossy().to_string();
+    let out_str = output_dir.to_string_lossy().to_string();
+
+    let dumper_ext = dumper_path
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
+    let is_dll = dumper_ext.eq_ignore_ascii_case("dll");
+
+    let output = if is_dll {
+        Command::new("dotnet")
+            .args([
+                "--roll-forward",
+                "Major",
+                &dumper_path.to_string_lossy(),
+                &ga_str,
+                &meta_str,
+                &out_str,
+            ])
+            .stdin(Stdio::null())
+            .output()
+    } else {
+        Command::new(&dumper_path)
+            .args([&ga_str, &meta_str, &out_str])
+            .stdin(Stdio::null())
+            .output()
+    };
+
+    let dump_cs = output_dir.join("dump.cs");
+    let script_json = output_dir.join("script.json");
+
+    if !dump_cs.exists() || dump_cs.metadata().map(|m| m.len()).unwrap_or(0) < 1000 {
+        let err_msg = match output {
+            Ok(o) => format!(
+                "Dumper stdout: {}\nstderr: {}",
+                String::from_utf8_lossy(&o.stdout),
+                String::from_utf8_lossy(&o.stderr)
+            ),
+            Err(e) => format!("Failed to execute dumper: {}", e),
+        };
+        return Err(format!(
+            "dump.cs was not generated at {}. Error: {}",
+            dump_cs.display(),
+            err_msg
+        ));
+    }
+
+    let files_generated = [
+        dump_cs.exists().then_some("dump.cs"),
+        script_json.exists().then_some("script.json"),
+        output_dir
+            .join("stringliteral.json")
+            .exists()
+            .then_some("stringliteral.json"),
+        output_dir.join("il2cpp.h").exists().then_some("il2cpp.h"),
+        output_dir.join("DummyDll").is_dir().then_some("DummyDll"),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>();
+
+    Ok(tool_ok(
+        "Il2CppDumper executed successfully and generated artifacts.",
+        json!({
+            "output_dir": output_dir.to_string_lossy(),
+            "dump_cs": dump_cs.to_string_lossy(),
+            "dump_cs_bytes": dump_cs.metadata().map(|m| m.len()).unwrap_or(0),
+            "files": files_generated,
+            "game_assembly": ga_str,
+            "metadata": meta_str,
+        }),
+        Some("Use il2cpp_scan_taskbarhero_offsets to analyze the newly generated dump.cs."),
+    ))
+}
+
+fn find_il2cpp_dumper() -> Result<PathBuf, String> {
+    let candidates = [
+        PathBuf::from("reverse/taskbarhero/tools/Il2CppDumper.exe"),
+        PathBuf::from("reverse/taskbarhero/tools/Il2CppDumper.dll"),
+        PathBuf::from("tools/Il2CppDumper.exe"),
+        PathBuf::from("tools/Il2CppDumper.dll"),
+    ];
+    for c in &candidates {
+        if c.exists() {
+            return Ok(c.clone());
+        }
+    }
+    if let Some(p) =
+        find_executable_in_path("Il2CppDumper").or_else(|| find_executable_in_path("il2cppdumper"))
+    {
+        return Ok(p);
+    }
+    Err("Could not locate Il2CppDumper. Please provide 'dumper_path' or place Il2CppDumper in reverse/taskbarhero/tools/".to_string())
+}
+
+fn find_executable_in_path(name: &str) -> Option<PathBuf> {
+    if let Some(paths) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&paths) {
+            let candidate = dir.join(name);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+            #[cfg(target_os = "windows")]
+            {
+                let with_exe = dir.join(format!("{name}.exe"));
+                if with_exe.is_file() {
+                    return Some(with_exe);
+                }
+            }
+        }
+    }
+    None
+}
+
 fn find_methods_in_dump<F>(
     path: &Path,
     limit: usize,
@@ -3084,12 +3390,15 @@ fn read_modules(pid: u64) -> Result<Vec<ModuleMap>, String> {
     #[cfg(target_os = "windows")]
     {
         let mods = windows::list_modules(pid)?;
-        Ok(mods.into_iter().map(|m| ModuleMap {
-            base: m.base,
-            end: m.base.saturating_add(m.size),
-            perms: "r-x".to_string(),
-            path: if m.path.is_empty() { m.name } else { m.path },
-        }).collect())
+        Ok(mods
+            .into_iter()
+            .map(|m| ModuleMap {
+                base: m.base,
+                end: m.base.saturating_add(m.size),
+                perms: "r-x".to_string(),
+                path: if m.path.is_empty() { m.name } else { m.path },
+            })
+            .collect())
     }
     #[cfg(target_os = "linux")]
     {
@@ -3498,7 +3807,11 @@ fn scanmem_simple_command(
             }
             "list" => {
                 if let Some(win_scan) = &sess.windows_scan {
-                    native_scan::format_scan_output(&win_scan.matches, win_scan.matches.len(), win_scan.scan_type)
+                    native_scan::format_scan_output(
+                        &win_scan.matches,
+                        win_scan.matches.len(),
+                        win_scan.scan_type,
+                    )
                 } else {
                     "0 matches found.".to_string()
                 }
@@ -4059,6 +4372,10 @@ mod tests {
         assert!(tools
             .iter()
             .any(|tool| tool["name"] == "il2cpp_related_methods"));
+        assert!(tools.iter().any(|tool| tool["name"] == "il2cpp_run_dumper"));
+        assert!(tools
+            .iter()
+            .any(|tool| tool["name"] == "il2cpp_scan_taskbarhero_offsets"));
         assert!(tools.iter().any(|tool| tool["name"] == "table_create"));
         assert!(tools
             .iter()
@@ -4066,6 +4383,34 @@ mod tests {
         assert!(tools
             .iter()
             .any(|tool| tool["name"] == "table_validate_entries"));
+    }
+
+    #[test]
+    fn test_il2cpp_scan_taskbarhero_offsets_dispatch() {
+        let mut state = new_state();
+        let dump_path = "reverse/taskbarhero/tools/dump.cs";
+        if !std::path::Path::new(dump_path).exists() {
+            return;
+        }
+        let res = handle(
+            Request {
+                jsonrpc: Some("2.0".into()),
+                id: Some(json!(1)),
+                method: "tools/call".into(),
+                params: json!({
+                    "name": "il2cpp_scan_taskbarhero_offsets",
+                    "arguments": {
+                        "dump_path": dump_path
+                    }
+                }),
+            },
+            &mut state,
+        );
+        assert_eq!(res["result"]["isError"], false);
+        let text = res["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("Successfully discovered TaskbarHero offsets"));
+        assert!(text.contains("0xC3A860"));
+        assert!(text.contains("0xC3B810"));
     }
 
     #[test]
@@ -4540,7 +4885,8 @@ mod tests {
             "pid": std::process::id(),
             "address": "0x1000",
             "bytes_hex": "90 90"
-        })).unwrap_err();
+        }))
+        .unwrap_err();
         assert!(err.contains("confirm_write must be true"));
 
         let dry = memory_write_bytes(&json!({
@@ -4548,7 +4894,8 @@ mod tests {
             "address": "0x1000",
             "bytes_hex": "90 90",
             "dry_run": true
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(dry["ok"], true);
         assert_eq!(dry["data"]["dry_run"], true);
         assert_eq!(dry["data"]["bytes_len"], 2);

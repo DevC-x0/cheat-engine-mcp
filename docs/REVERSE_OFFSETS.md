@@ -77,3 +77,39 @@ Semua alamat di bawah ini adalah offset relatif (RVA) dari base address modul `G
 > [!NOTE]
 > Rumus dekripsi manual untuk `ObscuredFloat`:
 > `decrypted_float = (float)(hiddenValue ^ currentCryptoKey)`
+
+---
+
+## 🔄 Otomasi Pemindaian Offset Saat Game Update (v0.4.2)
+
+Ketika game *Taskbar Heroes* melakukan pembaruan (update), nama kelas dan fungsi IL2CPP akan diacak ulang (*obfuscated*). Jangan melakukan pemindaian manual dari awal, gunakan tool otomasi berikut:
+
+### 1. Ekstraksi Metadata Otomatis (`il2cpp_run_dumper`)
+Mengekstrak file `dump.cs` dan metadata langsung dari proses game yang sedang berjalan (PID) atau path file:
+```json
+{
+  "name": "il2cpp_run_dumper",
+  "arguments": {
+    "pid": 23171
+  }
+}
+```
+
+### 2. Penelusuran Anchor Heuristik Otomatis (`il2cpp_scan_taskbarhero_offsets`)
+Membaca `dump.cs` dan secara deterministik menemukan seluruh RVA baru:
+```json
+{
+  "name": "il2cpp_scan_taskbarhero_offsets",
+  "arguments": {
+    "dump_path": "reverse/taskbarhero/tools/dump.cs",
+    "pid": 23171
+  }
+}
+```
+Tool ini secara otomatis melacak:
+* **Base Health Class** via `SpriteSlider HpBar` & RVA Base Damage (`pj.gsi` / `ph.gsf`)
+* **Hero Subclass** & RVA Godmode Hero (`pf.gsi` / `pd.gsf`)
+* **Stat Multiplier Extension** via `StatType` parameter (`zo.haz` / `pn.hal`)
+* **AoE Physical Radius & Hitbox** via `DamageDetectRadiusRawValue` (`bec.nax` / `bdl.muj`)
+* Menghitung **Runtime Address** (`Base + RVA`) untuk langsung dipatch via `memory_write_bytes`.
+

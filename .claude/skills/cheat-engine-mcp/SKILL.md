@@ -26,6 +26,18 @@ Use this skill before answering when the request mentions any of:
 - GDB dynamic hooks/probes require preview first, then `confirm_hook: true` or `confirm_probe: true` (Linux only).
 - Never commit or expose files under `reverse/` or `.cheat-tables/`; they are local artifacts.
 
+## Automated IL2CPP Update & Offset Recovery Workflow
+When a game updates or the user asks to scan offsets (e.g. for Taskbar Heroes):
+1. Run `il2cpp_run_dumper` with the game `pid` or file paths: automatically extracts `dump.cs` and metadata from `GameAssembly.dll`.
+2. Run `il2cpp_scan_taskbarhero_offsets`: automatically performs heuristic anchor matching on `dump.cs`:
+   - Base health class & Base Damage RVA (`pj.gsi` / `ph.gsf`)
+   - Hero subclass & Godmode Hero Damage RVA (`pf.gsi` / `pd.gsf`)
+   - Stat Multiplier extension method (`zo.haz` / `pn.hal`)
+   - Physical AoE Radius calculator (`bec.nax` / `bdl.muj`)
+3. Present the resulting RVAs and computed runtime addresses (`module_base + RVA`) in a Markdown table.
+4. If requested, patch the target bytes directly using `memory_write_bytes(pid: ..., address: ..., bytes_hex: "...", confirm_write: true)`.
+
+
 ## Common commands
 
 ```bash

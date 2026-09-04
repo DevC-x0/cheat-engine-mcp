@@ -1,10 +1,10 @@
 #![cfg(target_os = "windows")]
 #![allow(non_snake_case, non_camel_case_types, dead_code)]
 
+use crate::native_scan::{self, ParsedValue, ScanMatch, ScanType};
+use serde_json::{json, Value};
 use std::ffi::c_void;
 use std::ptr;
-use serde_json::{json, Value};
-use crate::native_scan::{self, ParsedValue, ScanMatch, ScanType};
 
 pub type HANDLE = *mut c_void;
 pub type BOOL = i32;
@@ -141,7 +141,10 @@ pub fn list_processes(filter: Option<&str>) -> Result<Vec<String>, String> {
     unsafe {
         let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
         if snapshot == INVALID_HANDLE_VALUE {
-            return Err(format!("failed to create process snapshot: error code {}", GetLastError()));
+            return Err(format!(
+                "failed to create process snapshot: error code {}",
+                GetLastError()
+            ));
         }
         let _guard = AutoCloseHandle(snapshot);
 
@@ -157,7 +160,10 @@ pub fn list_processes(filter: Option<&str>) -> Result<Vec<String>, String> {
                 let pid = entry.th32ProcessID;
                 if pid > 0 {
                     let line = format!("{:>7} {}", pid, name);
-                    if filter.is_empty() || name.to_lowercase().contains(&filter) || pid.to_string().contains(&filter) {
+                    if filter.is_empty()
+                        || name.to_lowercase().contains(&filter)
+                        || pid.to_string().contains(&filter)
+                    {
                         results.push(line);
                     }
                 }
@@ -177,7 +183,10 @@ pub fn get_process_info(pid: u64) -> Result<Value, String> {
     unsafe {
         let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
         if snapshot == INVALID_HANDLE_VALUE {
-            return Err(format!("failed to inspect process: error code {}", GetLastError()));
+            return Err(format!(
+                "failed to inspect process: error code {}",
+                GetLastError()
+            ));
         }
         let _guard = AutoCloseHandle(snapshot);
 
@@ -216,9 +225,13 @@ pub struct ModuleInfo {
 
 pub fn list_modules(pid: u64) -> Result<Vec<ModuleInfo>, String> {
     unsafe {
-        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid as DWORD);
+        let snapshot =
+            CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid as DWORD);
         if snapshot == INVALID_HANDLE_VALUE {
-            return Err(format!("failed to snapshot modules for pid {pid}: error code {}", GetLastError()));
+            return Err(format!(
+                "failed to snapshot modules for pid {pid}: error code {}",
+                GetLastError()
+            ));
         }
         let _guard = AutoCloseHandle(snapshot);
 
@@ -284,7 +297,10 @@ fn protect_to_perms(protect: DWORD) -> &'static str {
 
 fn is_writable(protect: DWORD) -> bool {
     let base = protect & 0xFF;
-    base == PAGE_READWRITE || base == PAGE_WRITECOPY || base == PAGE_EXECUTE_READWRITE || base == PAGE_EXECUTE_WRITECOPY
+    base == PAGE_READWRITE
+        || base == PAGE_WRITECOPY
+        || base == PAGE_EXECUTE_READWRITE
+        || base == PAGE_EXECUTE_WRITECOPY
 }
 
 fn is_readable(protect: DWORD) -> bool {
@@ -294,9 +310,16 @@ fn is_readable(protect: DWORD) -> bool {
 
 pub fn query_memory_regions(pid: u64, writable_only: bool) -> Result<Vec<MemoryRegion>, String> {
     unsafe {
-        let handle = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid as DWORD);
+        let handle = OpenProcess(
+            PROCESS_QUERY_INFORMATION | PROCESS_VM_READ,
+            FALSE,
+            pid as DWORD,
+        );
         if handle.is_null() || handle == INVALID_HANDLE_VALUE {
-            return Err(format!("failed to open process {pid}: error code {}", GetLastError()));
+            return Err(format!(
+                "failed to open process {pid}: error code {}",
+                GetLastError()
+            ));
         }
         let _guard = AutoCloseHandle(handle);
 
@@ -348,9 +371,16 @@ pub fn query_memory_regions(pid: u64, writable_only: bool) -> Result<Vec<MemoryR
 
 pub fn read_process_memory(pid: u64, address: u64, len: usize) -> Result<Vec<u8>, String> {
     unsafe {
-        let handle = OpenProcess(PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, FALSE, pid as DWORD);
+        let handle = OpenProcess(
+            PROCESS_VM_READ | PROCESS_QUERY_INFORMATION,
+            FALSE,
+            pid as DWORD,
+        );
         if handle.is_null() || handle == INVALID_HANDLE_VALUE {
-            return Err(format!("failed to open process {pid} for memory read: error code {}", GetLastError()));
+            return Err(format!(
+                "failed to open process {pid} for memory read: error code {}",
+                GetLastError()
+            ));
         }
         let _guard = AutoCloseHandle(handle);
 
@@ -365,7 +395,11 @@ pub fn read_process_memory(pid: u64, address: u64, len: usize) -> Result<Vec<u8>
         );
 
         if success == FALSE || bytes_read == 0 {
-            return Err(format!("failed to read memory at 0x{:08x} (len={len}): error code {}", address, GetLastError()));
+            return Err(format!(
+                "failed to read memory at 0x{:08x} (len={len}): error code {}",
+                address,
+                GetLastError()
+            ));
         }
         buffer.truncate(bytes_read);
         Ok(buffer)
@@ -374,9 +408,16 @@ pub fn read_process_memory(pid: u64, address: u64, len: usize) -> Result<Vec<u8>
 
 pub fn write_process_memory(pid: u64, address: u64, data: &[u8]) -> Result<usize, String> {
     unsafe {
-        let handle = OpenProcess(PROCESS_VM_WRITE | PROCESS_VM_OPERATION | PROCESS_QUERY_INFORMATION, FALSE, pid as DWORD);
+        let handle = OpenProcess(
+            PROCESS_VM_WRITE | PROCESS_VM_OPERATION | PROCESS_QUERY_INFORMATION,
+            FALSE,
+            pid as DWORD,
+        );
         if handle.is_null() || handle == INVALID_HANDLE_VALUE {
-            return Err(format!("failed to open process {pid} for memory write: error code {}", GetLastError()));
+            return Err(format!(
+                "failed to open process {pid} for memory write: error code {}",
+                GetLastError()
+            ));
         }
         let _guard = AutoCloseHandle(handle);
 
@@ -390,7 +431,11 @@ pub fn write_process_memory(pid: u64, address: u64, data: &[u8]) -> Result<usize
         );
 
         if success == FALSE {
-            return Err(format!("failed to write memory at 0x{:08x}: error code {}", address, GetLastError()));
+            return Err(format!(
+                "failed to write memory at 0x{:08x}: error code {}",
+                address,
+                GetLastError()
+            ));
         }
         Ok(bytes_written)
     }
@@ -406,9 +451,16 @@ pub fn scan_process_memory_exact(
     let chunk_size = 64 * 1024; // 64KB chunks
 
     unsafe {
-        let handle = OpenProcess(PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, FALSE, pid as DWORD);
+        let handle = OpenProcess(
+            PROCESS_VM_READ | PROCESS_QUERY_INFORMATION,
+            FALSE,
+            pid as DWORD,
+        );
         if handle.is_null() || handle == INVALID_HANDLE_VALUE {
-            return Err(format!("failed to open process {pid}: error code {}", GetLastError()));
+            return Err(format!(
+                "failed to open process {pid}: error code {}",
+                GetLastError()
+            ));
         }
         let _guard = AutoCloseHandle(handle);
 
@@ -461,9 +513,16 @@ pub fn scan_process_memory_range(
     let chunk_size = 64 * 1024;
 
     unsafe {
-        let handle = OpenProcess(PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, FALSE, pid as DWORD);
+        let handle = OpenProcess(
+            PROCESS_VM_READ | PROCESS_QUERY_INFORMATION,
+            FALSE,
+            pid as DWORD,
+        );
         if handle.is_null() || handle == INVALID_HANDLE_VALUE {
-            return Err(format!("failed to open process {pid}: error code {}", GetLastError()));
+            return Err(format!(
+                "failed to open process {pid}: error code {}",
+                GetLastError()
+            ));
         }
         let _guard = AutoCloseHandle(handle);
 
@@ -515,9 +574,16 @@ pub fn scan_process_memory_unknown(
     let chunk_size = 64 * 1024;
 
     unsafe {
-        let handle = OpenProcess(PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, FALSE, pid as DWORD);
+        let handle = OpenProcess(
+            PROCESS_VM_READ | PROCESS_QUERY_INFORMATION,
+            FALSE,
+            pid as DWORD,
+        );
         if handle.is_null() || handle == INVALID_HANDLE_VALUE {
-            return Err(format!("failed to open process {pid}: error code {}", GetLastError()));
+            return Err(format!(
+                "failed to open process {pid}: error code {}",
+                GetLastError()
+            ));
         }
         let _guard = AutoCloseHandle(handle);
 
@@ -566,9 +632,16 @@ pub fn refine_scan_matches(
     target: Option<&ParsedValue>,
 ) -> Result<usize, String> {
     unsafe {
-        let handle = OpenProcess(PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, FALSE, pid as DWORD);
+        let handle = OpenProcess(
+            PROCESS_VM_READ | PROCESS_QUERY_INFORMATION,
+            FALSE,
+            pid as DWORD,
+        );
         if handle.is_null() || handle == INVALID_HANDLE_VALUE {
-            return Err(format!("failed to open process {pid}: error code {}", GetLastError()));
+            return Err(format!(
+                "failed to open process {pid}: error code {}",
+                GetLastError()
+            ));
         }
         let _guard = AutoCloseHandle(handle);
 
