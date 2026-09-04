@@ -228,6 +228,9 @@ fn tools() -> Value {
         { "name": "memory_read_float", "description": "Read bounded float/double values from a live readable process mapping.", "inputSchema": { "type": "object", "properties": { "pid": { "type": "integer" }, "address": { "type": "string" }, "count": { "type": "integer" }, "value_type": { "type": "string" } }, "required": ["pid", "address"] } },
         { "name": "memory_read_string", "description": "Read a bounded NUL-terminated string from a live readable process mapping.", "inputSchema": { "type": "object", "properties": { "pid": { "type": "integer" }, "address": { "type": "string" }, "max_bytes": { "type": "integer" } }, "required": ["pid", "address"] } },
         { "name": "memory_write_bytes", "description": "Write bounded raw bytes (hex string, e.g. '90 90' or 'C3') to a live process memory address. Requires confirm_write=true.", "inputSchema": { "type": "object", "properties": { "pid": { "type": "integer" }, "address": { "type": "string" }, "bytes_hex": { "type": "string" }, "confirm_write": { "type": "boolean" }, "dry_run": { "type": "boolean" } }, "required": ["pid", "address", "bytes_hex"] } },
+        { "name": "memory_allocate", "description": "Allocate virtual memory in target process (e.g. for code caves or detour stubs). Supports 'rwx', 'rw', 'rx', 'r'.", "inputSchema": { "type": "object", "properties": { "pid": { "type": "integer" }, "size": { "type": "integer" }, "preferred_address": { "type": "string" }, "protection": { "type": "string" } }, "required": ["pid", "size"] } },
+        { "name": "memory_protect", "description": "Change virtual memory protection flags of a region in target process.", "inputSchema": { "type": "object", "properties": { "pid": { "type": "integer" }, "address": { "type": "string" }, "size": { "type": "integer" }, "protection": { "type": "string" } }, "required": ["pid", "address", "size", "protection"] } },
+        { "name": "memory_free", "description": "Free virtual memory previously allocated in target process.", "inputSchema": { "type": "object", "properties": { "pid": { "type": "integer" }, "address": { "type": "string" }, "size": { "type": "integer" } }, "required": ["pid", "address"] } },
         { "name": "workspace_list", "description": "List game workspaces under reverse/ and their IL2CPP artifact status.", "inputSchema": { "type": "object", "properties": {} } },
         { "name": "workspace_status", "description": "Show IL2CPP artifact status for a workspace/game, active workspace, or root.", "inputSchema": { "type": "object", "properties": { "workspace": { "type": "string" }, "game": { "type": "string" }, "root": { "type": "string" } } } },
         { "name": "workspace_set_active", "description": "Set and persist the active game workspace for IL2CPP tools.", "inputSchema": { "type": "object", "properties": { "workspace": { "type": "string" }, "game": { "type": "string" } } } },
@@ -345,6 +348,9 @@ fn call_tool(id: Option<Value>, params: Value, state: &mut AppState) -> Value {
         "memory_read_float" => memory_read_float(&args),
         "memory_read_string" => memory_read_string(&args),
         "memory_write_bytes" => memory_write_bytes(&args),
+        "memory_allocate" => memory_allocate(&args),
+        "memory_protect" => memory_protect(&args),
+        "memory_free" => memory_free(&args),
         "workspace_list" => workspace_list(state.active_workspace.as_deref()),
         "workspace_status" => workspace_status(&args, state.active_workspace.as_deref()),
         "workspace_set_active" => workspace_set_active(&args, state),
@@ -1463,8 +1469,8 @@ fn memory_write_bytes(args: &Value) -> Result<Value, String> {
             .map_err(|_| format!("invalid hex byte: {}", &cleaned_hex[i..i + 2]))?;
         bytes.push(byte);
     }
-    if bytes.is_empty() || bytes.len() > 1024 {
-        return Err("write length must be 1..1024 bytes".to_string());
+    if bytes.is_empty() || bytes.len() > 65536 {
+        return Err("write length must be 1..65536 bytes (64 KB)".to_string());
     }
     let confirm = args.get("confirm_write").and_then(Value::as_bool) == Some(true);
     let dry_run = args.get("dry_run").and_then(Value::as_bool) == Some(true);
@@ -1525,6 +1531,327 @@ fn memory_write_bytes(args: &Value) -> Result<Value, String> {
     #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     {
         Err("memory writing is unsupported on this platform".to_string())
+    }
+}
+
+fn parse_protection_mode(prot: &str) -> Result<(&'static str, u32, i32), String> {
+    let lower = prot.trim().to_ascii_lowercase();
+    match lower.as_str() {
+        "rwx" | "page_execute_readwrite" | "execute_readwrite" => Ok(("rwx", 0x40, 7)),
+        "rx" | "page_execute_read" | "execute_read" => Ok(("rx", 0x20, 5)),
+        "rw" | "page_readwrite" | "readwrite" => Ok(("rw", 0x04, 3)),
+        "r" | "page_readonly" | "readonly" => Ok(("r", 0x02, 1)),
+        "x" | "page_execute" | "execute" => Ok(("x", 0x10, 4)),
+        _ => Err(format!(
+            "unsupported protection '{prot}'. Expected one of: 'rwx', 'rw', 'rx', 'r', 'x'"
+        )),
+    }
+}
+
+fn parse_size_param(args: &Value, name: &str) -> Result<usize, String> {
+    if let Some(n) = args.get(name).and_then(Value::as_u64) {
+        return Ok(n as usize);
+    }
+    if let Some(s) = args.get(name).and_then(Value::as_str) {
+        if let Ok(n) = parse_u64(s) {
+            return Ok(n as usize);
+        }
+    }
+    Err(format!(
+        "{name} is required and must be a valid size (e.g. 4096 or '0x1000')"
+    ))
+}
+
+fn memory_allocate(args: &Value) -> Result<Value, String> {
+    let pid = valid_live_pid(args)?;
+    let size = parse_size_param(args, "size")?;
+    if size == 0 || size > 64 * 1024 * 1024 {
+        return Err("allocation size must be between 1 and 67108864 bytes (64 MB)".to_string());
+    }
+    let preferred_address = match args.get("preferred_address") {
+        Some(v) if v.is_string() => {
+            let s = v.as_str().unwrap().trim();
+            if s.is_empty() {
+                None
+            } else {
+                Some(parse_u64(s)?)
+            }
+        }
+        Some(v) if v.is_number() => v.as_u64(),
+        _ => None,
+    };
+    let prot_str = args
+        .get("protection")
+        .and_then(Value::as_str)
+        .unwrap_or("rwx");
+    #[allow(unused_variables)]
+    let (canonical_prot, win_prot, linux_prot) = parse_protection_mode(prot_str)?;
+
+    #[cfg(target_os = "windows")]
+    {
+        let allocated = windows::allocate_process_memory(pid, size, preferred_address, prot_str)?;
+        Ok(tool_ok(
+            "Memory allocated successfully.",
+            json!({
+                "pid": pid,
+                "address": hex(allocated),
+                "size": size,
+                "protection": canonical_prot,
+                "win32_protect_dword": format!("0x{:02X}", win_prot)
+            }),
+            Some("Use memory_write_bytes to populate your code cave or buffer."),
+        ))
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let target_addr_str = preferred_address
+            .map(|a| hex(a))
+            .unwrap_or_else(|| "0".to_string());
+        let output = Command::new("gdb")
+            .args([
+                "-q",
+                "-nx",
+                "-batch",
+                "-ex",
+                "set pagination off",
+                "-ex",
+                "set confirm off",
+                "-ex",
+                "set debuginfod enabled off",
+                "-ex",
+                &format!("attach {pid}"),
+                "-ex",
+                &format!(
+                    "call (void*)mmap((void*){target_addr_str}, (unsigned long){size}, {linux_prot}, 0x22, -1, (long)0)"
+                ),
+                "-ex",
+                "printf \"ALLOCATED_AT: %p\\n\", $",
+                "-ex",
+                "detach",
+                "-ex",
+                "quit",
+            ])
+            .output();
+        match output {
+            Ok(out) => {
+                let text = String::from_utf8_lossy(&out.stdout);
+                let mut allocated_addr = None;
+                for line in text.lines() {
+                    if line.contains("ALLOCATED_AT:") {
+                        if let Some(s) = line.split("ALLOCATED_AT:").nth(1) {
+                            let trimmed = s.trim().trim_start_matches("0x");
+                            if let Ok(addr) = u64::from_str_radix(trimmed, 16) {
+                                allocated_addr = Some(addr);
+                                break;
+                            }
+                        }
+                    }
+                }
+                if let Some(addr) = allocated_addr {
+                    if addr != 0 && addr != u64::MAX {
+                        return Ok(tool_ok(
+                            "Memory allocated successfully via GDB mmap.",
+                            json!({
+                                "pid": pid,
+                                "address": hex(addr),
+                                "size": size,
+                                "protection": canonical_prot
+                            }),
+                            Some("Use memory_write_bytes to populate the allocated memory."),
+                        ));
+                    }
+                }
+                let err_text = String::from_utf8_lossy(&out.stderr);
+                Err(format!(
+                    "GDB mmap allocation failed: {}\n{}",
+                    text.trim(),
+                    err_text.trim()
+                ))
+            }
+            Err(e) => Err(format!(
+                "GDB is required for memory allocation on Linux: {e}"
+            )),
+        }
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    {
+        let _ = (preferred_address, canonical_prot, win_prot, linux_prot);
+        Err("memory allocation is unsupported on this platform".to_string())
+    }
+}
+
+fn memory_protect(args: &Value) -> Result<Value, String> {
+    let pid = valid_live_pid(args)?;
+    let address = parse_u64(required_str(args, "address")?)?;
+    let size = parse_size_param(args, "size")?;
+    if size == 0 || size > 64 * 1024 * 1024 {
+        return Err("size must be between 1 and 67108864 bytes (64 MB)".to_string());
+    }
+    let prot_str = required_str(args, "protection")?;
+    #[allow(unused_variables)]
+    let (canonical_prot, win_prot, linux_prot) = parse_protection_mode(prot_str)?;
+
+    #[cfg(target_os = "windows")]
+    {
+        let (old_prot, new_prot) = windows::protect_process_memory(pid, address, size, prot_str)?;
+        Ok(tool_ok(
+            "Memory protection updated.",
+            json!({
+                "pid": pid,
+                "address": hex(address),
+                "size": size,
+                "new_protection": canonical_prot,
+                "old_protection_dword": format!("0x{:02X}", old_prot),
+                "new_protection_dword": format!("0x{:02X}", new_prot)
+            }),
+            Some("Memory protection changed."),
+        ))
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let output = Command::new("gdb")
+            .args([
+                "-q",
+                "-nx",
+                "-batch",
+                "-ex",
+                "set pagination off",
+                "-ex",
+                "set confirm off",
+                "-ex",
+                "set debuginfod enabled off",
+                "-ex",
+                &format!("attach {pid}"),
+                "-ex",
+                &format!(
+                    "call (int)mprotect((void*){}, (unsigned long){size}, {linux_prot})",
+                    hex(address)
+                ),
+                "-ex",
+                "printf \"MPROTECT_RESULT: %d\\n\", $",
+                "-ex",
+                "detach",
+                "-ex",
+                "quit",
+            ])
+            .output();
+        match output {
+            Ok(out) => {
+                let text = String::from_utf8_lossy(&out.stdout);
+                if text.contains("MPROTECT_RESULT: 0") {
+                    Ok(tool_ok(
+                        "Memory protection updated via GDB mprotect.",
+                        json!({
+                            "pid": pid,
+                            "address": hex(address),
+                            "size": size,
+                            "new_protection": canonical_prot
+                        }),
+                        Some("Memory protection changed."),
+                    ))
+                } else {
+                    let err_text = String::from_utf8_lossy(&out.stderr);
+                    Err(format!(
+                        "GDB mprotect failed: {}\n{}",
+                        text.trim(),
+                        err_text.trim()
+                    ))
+                }
+            }
+            Err(e) => Err(format!(
+                "GDB is required for memory protection on Linux: {e}"
+            )),
+        }
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    {
+        let _ = (win_prot, linux_prot, canonical_prot);
+        Err("memory protection is unsupported on this platform".to_string())
+    }
+}
+
+fn memory_free(args: &Value) -> Result<Value, String> {
+    let pid = valid_live_pid(args)?;
+    let address = parse_u64(required_str(args, "address")?)?;
+    let size = match args.get("size") {
+        Some(v) if v.is_number() => v.as_u64().unwrap_or(0) as usize,
+        Some(v) if v.is_string() => parse_u64(v.as_str().unwrap()).unwrap_or(0) as usize,
+        _ => 0,
+    };
+
+    #[cfg(target_os = "windows")]
+    {
+        windows::free_process_memory(pid, address, size)?;
+        Ok(tool_ok(
+            "Memory freed successfully.",
+            json!({
+                "pid": pid,
+                "address": hex(address),
+                "size": size
+            }),
+            None,
+        ))
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let unmap_size = if size > 0 { size } else { 4096 };
+        let output = Command::new("gdb")
+            .args([
+                "-q",
+                "-nx",
+                "-batch",
+                "-ex",
+                "set pagination off",
+                "-ex",
+                "set confirm off",
+                "-ex",
+                "set debuginfod enabled off",
+                "-ex",
+                &format!("attach {pid}"),
+                "-ex",
+                &format!(
+                    "call (int)munmap((void*){}, (unsigned long){unmap_size})",
+                    hex(address)
+                ),
+                "-ex",
+                "printf \"MUNMAP_RESULT: %d\\n\", $",
+                "-ex",
+                "detach",
+                "-ex",
+                "quit",
+            ])
+            .output();
+        match output {
+            Ok(out) => {
+                let text = String::from_utf8_lossy(&out.stdout);
+                if text.contains("MUNMAP_RESULT: 0") {
+                    Ok(tool_ok(
+                        "Memory unmapped via GDB munmap.",
+                        json!({
+                            "pid": pid,
+                            "address": hex(address),
+                            "size": unmap_size
+                        }),
+                        None,
+                    ))
+                } else {
+                    let err_text = String::from_utf8_lossy(&out.stderr);
+                    Err(format!(
+                        "GDB munmap failed: {}\n{}",
+                        text.trim(),
+                        err_text.trim()
+                    ))
+                }
+            }
+            Err(e) => Err(format!(
+                "GDB is required for memory unmapping on Linux: {e}"
+            )),
+        }
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    {
+        let _ = size;
+        Err("memory freeing is unsupported on this platform".to_string())
     }
 }
 
@@ -4899,5 +5226,77 @@ mod tests {
         assert_eq!(dry["ok"], true);
         assert_eq!(dry["data"]["dry_run"], true);
         assert_eq!(dry["data"]["bytes_len"], 2);
+    }
+
+    #[test]
+    fn parse_protection_mode_works() {
+        let (name, win, linux) = parse_protection_mode("rwx").unwrap();
+        assert_eq!(name, "rwx");
+        assert_eq!(win, 0x40);
+        assert_eq!(linux, 7);
+
+        let (name, win, linux) = parse_protection_mode("rx").unwrap();
+        assert_eq!(name, "rx");
+        assert_eq!(win, 0x20);
+        assert_eq!(linux, 5);
+
+        let (name, win, linux) = parse_protection_mode("rw").unwrap();
+        assert_eq!(name, "rw");
+        assert_eq!(win, 0x04);
+        assert_eq!(linux, 3);
+
+        assert!(parse_protection_mode("invalid_mode").is_err());
+    }
+
+    #[test]
+    fn memory_allocate_validates_inputs() {
+        let err = memory_allocate(&json!({
+            "pid": std::process::id()
+        }))
+        .unwrap_err();
+        assert!(err.contains("size is required"));
+
+        let err2 = memory_allocate(&json!({
+            "pid": std::process::id(),
+            "size": 0
+        }))
+        .unwrap_err();
+        assert!(err2.contains("allocation size must be between 1 and 67108864"));
+
+        let err3 = memory_allocate(&json!({
+            "pid": std::process::id(),
+            "size": 4096,
+            "protection": "super_secret_mode"
+        }))
+        .unwrap_err();
+        assert!(err3.contains("unsupported protection"));
+    }
+
+    #[test]
+    fn memory_protect_validates_inputs() {
+        let err = memory_protect(&json!({
+            "pid": std::process::id(),
+            "size": 4096,
+            "protection": "rwx"
+        }))
+        .unwrap_err();
+        assert!(err.contains("address is required"));
+
+        let err2 = memory_protect(&json!({
+            "pid": std::process::id(),
+            "address": "0x1000",
+            "size": 4096
+        }))
+        .unwrap_err();
+        assert!(err2.contains("protection is required"));
+    }
+
+    #[test]
+    fn memory_free_validates_inputs() {
+        let err = memory_free(&json!({
+            "pid": std::process::id()
+        }))
+        .unwrap_err();
+        assert!(err.contains("address is required"));
     }
 }

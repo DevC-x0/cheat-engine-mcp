@@ -113,3 +113,53 @@ Tool ini secara otomatis melacak:
 * **AoE Physical Radius & Hitbox** via `DamageDetectRadiusRawValue` (`bec.nax` / `bdl.muj`)
 * Menghitung **Runtime Address** (`Base + RVA`) untuk langsung dipatch via `memory_write_bytes`.
 
+### 3. Alokasi Code Cave & Detour Hooking (`memory_allocate` & `memory_write_bytes`)
+Untuk memasang detour hook (godmode hero, damage multiplier, AoE radius) langsung dari MCP tanpa membutuhkan injector eksternal di Windows & Linux:
+
+1. **Alokasikan RWX Code Cave**:
+```json
+{
+  "name": "memory_allocate",
+  "arguments": {
+    "pid": 23171,
+    "size": 4096,
+    "protection": "rwx"
+  }
+}
+```
+2. **Tulis Detour Hook Payload & Konstanta ke Cave Memory**:
+```json
+{
+  "name": "memory_write_bytes",
+  "arguments": {
+    "pid": 23171,
+    "address": "0x1b40080",
+    "bytes_hex": "50 48 8B 41 30 48 85 C0 74 0C 80 B8 00 01 00 00 00 74 03 0F 57 C9 F3 0F 59 0D 0C 00 00 00 58 48 89 5C 24 08 57 E9 ...",
+    "confirm_write": true
+  }
+}
+```
+3. **Patch Prologue Target Method dengan Jump ke Cave**:
+```json
+{
+  "name": "memory_write_bytes",
+  "arguments": {
+    "pid": 23171,
+    "address": "0x7ffb12345678",
+    "bytes_hex": "E9 4B 44 E7 FF 90",
+    "confirm_write": true
+  }
+}
+```
+4. *(Opsional)* Jika perlu mengubah proteksi memori kode game sebelum/sesudah patching:
+```json
+{
+  "name": "memory_protect",
+  "arguments": {
+    "pid": 23171,
+    "address": "0x7ffb12345678",
+    "size": 16,
+    "protection": "rwx"
+  }
+}
+```

@@ -35,7 +35,7 @@ When a game updates or the user asks to scan offsets (e.g. for Taskbar Heroes):
    - Stat Multiplier extension method (`zo.haz` / `pn.hal`)
    - Physical AoE Radius calculator (`bec.nax` / `bdl.muj`)
 3. Present the resulting RVAs and computed runtime addresses (`module_base + RVA`) in a Markdown table.
-4. If requested, patch the target bytes directly using `memory_write_bytes(pid: ..., address: ..., bytes_hex: "...", confirm_write: true)`.
+4. For detour hooks and code caves on Windows and Linux: allocate executable memory via `memory_allocate(protection: "rwx")`, write hook instructions and jump backs with `memory_write_bytes`, and patch the target function prologue with `jmp <cave_address>`. No external injector or Linux/GDB dependencies are required on Windows!
 
 
 ## Common commands

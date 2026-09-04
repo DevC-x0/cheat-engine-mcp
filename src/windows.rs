@@ -29,6 +29,9 @@ pub const TH32CS_SNAPMODULE: DWORD = 0x00000008;
 pub const TH32CS_SNAPMODULE32: DWORD = 0x00000010;
 
 pub const MEM_COMMIT: DWORD = 0x1000;
+pub const MEM_RESERVE: DWORD = 0x2000;
+pub const MEM_DECOMMIT: DWORD = 0x4000;
+pub const MEM_RELEASE: DWORD = 0x8000;
 
 pub const PAGE_NOACCESS: DWORD = 0x01;
 pub const PAGE_READONLY: DWORD = 0x02;
@@ -108,6 +111,26 @@ extern "system" {
         lpBuffer: *const c_void,
         nSize: SIZE_T,
         lpNumberOfBytesWritten: *mut SIZE_T,
+    ) -> BOOL;
+    pub fn VirtualAllocEx(
+        hProcess: HANDLE,
+        lpAddress: *mut c_void,
+        dwSize: SIZE_T,
+        flAllocationType: DWORD,
+        flProtect: DWORD,
+    ) -> *mut c_void;
+    pub fn VirtualProtectEx(
+        hProcess: HANDLE,
+        lpAddress: *mut c_void,
+        dwSize: SIZE_T,
+        flNewProtect: DWORD,
+        lpflOldProtect: *mut DWORD,
+    ) -> BOOL;
+    pub fn VirtualFreeEx(
+        hProcess: HANDLE,
+        lpAddress: *mut c_void,
+        dwSize: SIZE_T,
+        dwFreeType: DWORD,
     ) -> BOOL;
     pub fn GetLastError() -> DWORD;
 }
@@ -684,5 +707,130 @@ pub fn refine_scan_matches(
         });
 
         Ok(matches.len())
+    }
+}
+
+pub fn parse_protection_str(prot: &str) -> Result<DWORD, String> {
+    let lower = prot.trim().to_ascii_lowercase();
+    match lower.as_str() {
+        "rwx" | "page_execute_readwrite" | "execute_readwrite" => Ok(PAGE_EXECUTE_READWRITE),
+        "rx" | "page_execute_read" | "execute_read" => Ok(PAGE_EXECUTE_READ),
+        "rw" | "page_readwrite" | "readwrite" => Ok(PAGE_READWRITE),
+        "r" | "page_readonly" | "readonly" => Ok(PAGE_READONLY),
+        "x" | "page_execute" | "execute" => Ok(PAGE_EXECUTE),
+        "noaccess" | "page_noaccess" => Ok(PAGE_NOACCESS),
+        _ => Err(format!(
+            "unknown protection '{prot}'. Expected one of: 'rwx', 'rw', 'rx', 'r', 'x'"
+        )),
+    }
+}
+
+pub fn allocate_process_memory(
+    pid: u64,
+    size: usize,
+    preferred_address: Option<u64>,
+    protection: &str,
+) -> Result<u64, String> {
+    let fl_protect = parse_protection_str(protection)?;
+    unsafe {
+        let handle = OpenProcess(
+            PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ | PROCESS_QUERY_INFORMATION,
+            FALSE,
+            pid as DWORD,
+        );
+        if handle.is_null() || handle == INVALID_HANDLE_VALUE {
+            return Err(format!(
+                "failed to open process {pid} for memory allocation: error code {}",
+                GetLastError()
+            ));
+        }
+        let _guard = AutoCloseHandle(handle);
+
+        let target_ptr = preferred_address
+            .map(|a| a as *mut c_void)
+            .unwrap_or(ptr::null_mut());
+        let result = VirtualAllocEx(
+            handle,
+            target_ptr,
+            size,
+            MEM_COMMIT | MEM_RESERVE,
+            fl_protect,
+        );
+
+        if result.is_null() {
+            return Err(format!(
+                "VirtualAllocEx failed for pid {pid} (size: {size}): error code {}",
+                GetLastError()
+            ));
+        }
+
+        Ok(result as u64)
+    }
+}
+
+pub fn protect_process_memory(
+    pid: u64,
+    address: u64,
+    size: usize,
+    protection: &str,
+) -> Result<(u32, u32), String> {
+    let fl_new_protect = parse_protection_str(protection)?;
+    unsafe {
+        let handle = OpenProcess(
+            PROCESS_VM_OPERATION | PROCESS_QUERY_INFORMATION,
+            FALSE,
+            pid as DWORD,
+        );
+        if handle.is_null() || handle == INVALID_HANDLE_VALUE {
+            return Err(format!(
+                "failed to open process {pid} for memory protection: error code {}",
+                GetLastError()
+            ));
+        }
+        let _guard = AutoCloseHandle(handle);
+
+        let mut old_protect: DWORD = 0;
+        let success = VirtualProtectEx(
+            handle,
+            address as *mut c_void,
+            size,
+            fl_new_protect,
+            &mut old_protect,
+        );
+
+        if success == FALSE {
+            return Err(format!(
+                "VirtualProtectEx failed at 0x{:x} for pid {pid}: error code {}",
+                address,
+                GetLastError()
+            ));
+        }
+
+        Ok((old_protect, fl_new_protect))
+    }
+}
+
+pub fn free_process_memory(pid: u64, address: u64, _size: usize) -> Result<(), String> {
+    unsafe {
+        let handle = OpenProcess(PROCESS_VM_OPERATION, FALSE, pid as DWORD);
+        if handle.is_null() || handle == INVALID_HANDLE_VALUE {
+            return Err(format!(
+                "failed to open process {pid} for memory free: error code {}",
+                GetLastError()
+            ));
+        }
+        let _guard = AutoCloseHandle(handle);
+
+        let success = VirtualFreeEx(handle, address as *mut c_void, 0, MEM_RELEASE);
+
+        if success == FALSE {
+            return Err(format!(
+                "VirtualFreeEx failed at 0x{:x} for pid {pid}: error code {}",
+                address,
+                GetLastError()
+            ));
+        }
+
+        Ok(())
     }
 }

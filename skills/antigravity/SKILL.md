@@ -54,3 +54,10 @@ This tool is authorized for local/defensive/educational testing only. Always res
 4. Run `gdb_hook_preview` to inspect the generated GDB script.
 5. Launch hook with `gdb_hook_start` using `confirm_hook: true`.
 6. Stop and clean up using `gdb_hook_stop` with target ID.
+
+### 4. Code Cave Allocation & Detour Hooking (Windows & Linux)
+1. Allocate an executable memory region (`protection: "rwx"`, e.g. 4096 bytes) using `memory_allocate`.
+2. Write the detour hook logic (custom instructions + jump back to original code) into the allocated cave address via `memory_write_bytes`.
+3. Overwrite the original function prologue at module base + RVA with a jump (`jmp <cave_address>`) using `memory_write_bytes`.
+4. If needed, modify memory protection flags before/after patching via `memory_protect`.
+5. Free allocated memory when no longer needed using `memory_free`.

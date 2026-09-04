@@ -8,7 +8,7 @@
   1. Use `il2cpp_run_dumper` to automatically dump `GameAssembly.dll` and `global-metadata.dat` from the live PID or game directory.
   2. Use `il2cpp_scan_taskbarhero_offsets` to automatically discover Godmode Hero (`pf.gsi`), Base Damage (`pj.gsi`), Stat Multiplier (`zo.haz`), and AoE Radius (`bec.nax`).
   3. Output the discovered RVAs and runtime addresses in a Markdown table.
-  4. Use `memory_write_bytes` to patch the desired hooks.
+  4. For detour hooks and code caves on Windows and Linux: use `memory_allocate` with `protection: "rwx"` to create executable memory caves, then write detour instructions and patch target function prologues via `memory_write_bytes`. No external injector or Linux environment is required on Windows!
 - Keep memory writes safe: preview/dry_run first; real writes require `confirm_write:true` and low `max_writes`.
 - GDB dynamic attach/hook/probe requires preview first, then explicit `confirm_hook:true` or `confirm_probe:true` (Linux only).
 - Do not commit or expose local artifacts under `reverse/` or `.cheat-tables/`.

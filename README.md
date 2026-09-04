@@ -17,7 +17,8 @@
 | Category | Tools | Description | Supported OS |
 |---|---|---|---|
 | 🔍 **Memory Scanning** | `scanmem_scan_*`, `session_*` | Exact, range, type-based, increased/decreased/changed value scanning | **Linux & Windows** |
-| ✏️ **Memory Writing** | `scanmem_write_*`, `memory_write_bytes`, `scanmem_freeze_*` | Safe guarded writes with preview, dry-run, confirmation, hex patching, and persistent freeze | **Linux & Windows** |
+| 🧱 **Memory Alloc & Protect** | `memory_allocate`, `memory_protect`, `memory_free` | Allocate virtual memory (`VirtualAllocEx` / `mmap`), set page protection flags (`VirtualProtectEx` / `mprotect`), and free stubs | **Linux & Windows** |
+| ✏️ **Memory Writing** | `scanmem_write_*`, `memory_write_bytes` (up to 64KB), `scanmem_freeze_*` | Safe guarded writes with preview, dry-run, confirmation, hex patching, and persistent freeze | **Linux & Windows** |
 | 📖 **Memory Reading** | `memory_read_*` | Read bytes, ints, floats, and strings from process memory | **Linux & Windows** |
 | 🧬 **IL2CPP Reverse** | `il2cpp_*` | Search classes, methods, fields, strings, and RVA in Unity IL2CPP dumps | **Linux & Windows** |
 | 🔄 **IL2CPP Automation** | `il2cpp_run_dumper`, `il2cpp_scan_taskbarhero_offsets` | Automated dumper execution & deterministic heuristic offset recovery across game updates | **Linux & Windows** |
@@ -26,7 +27,7 @@
 | 🎯 **Process Utils** | `process_*`, `rva_*` | Process search, module listing, RVA/address conversion, memory maps | **Linux & Windows** |
 | 🔬 **GDB Hooks** | `gdb_hook_*`, `gdb_probe_*` | Dynamic function hooking, breakpoint probes, disassembly preview | Linux only |
 
-**75 MCP tools** in total — all accessible via natural language through any MCP-compatible AI assistant.
+**78 MCP tools** in total — all accessible via natural language through any MCP-compatible AI assistant.
 
 ---
 
@@ -268,13 +269,16 @@ The AI will:
 | `scanmem_scan_range` | Scan value range |
 | `scanmem_scan_by_type` | Typed scan (int32/float/string/etc.) |
 
-### Writing & Freezing
+### Writing & Allocation
 
 | Tool | Description |
 |---|---|
+| `memory_allocate` | Allocate virtual memory (`VirtualAllocEx` on Windows, `mmap` on Linux) with `rwx`, `rw`, `rx`, or `r` permissions |
+| `memory_protect` | Modify memory page protection flags (`VirtualProtectEx` on Windows, `mprotect` on Linux) |
+| `memory_free` | Free or decommit virtual memory (`VirtualFreeEx` on Windows, `munmap` on Linux) |
+| `memory_write_bytes` | Write bounded raw hex bytes (up to 64KB, e.g. code cave payloads, detour stubs) directly to memory / RVA |
 | `scanmem_preview_write` | Preview write operation (safe) |
 | `scanmem_write_selected` | Write to matched addresses |
-| `memory_write_bytes` | Write bounded raw hex bytes (e.g. `90 90`, `C3`) directly to process memory / RVA |
 | `scanmem_freeze_value` | Freeze value (one-shot or persistent) |
 | `scanmem_unfreeze_value` | Stop freezing |
 
