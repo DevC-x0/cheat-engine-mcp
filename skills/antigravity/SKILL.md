@@ -35,6 +35,7 @@ This tool is authorized for local/defensive/educational testing only. Always res
 5. List remaining matches with `scanmem_list_matches`.
 6. Preview the write with `scanmem_preview_write`.
 7. Write or freeze the value with `scanmem_write_selected` or `scanmem_freeze_value` specifying `confirm_write: true`.
+8. For direct byte/instruction patching (e.g. Godmode RVA detour): calculate target address via `rva_to_address`, preview with `dry_run: true`, and write with `memory_write_bytes(confirm_write: true)`.
 
 ### 2. Unity IL2CPP Reverse Engineering
 1. Check IL2CPP dump status with `il2cpp_artifacts_status`.
